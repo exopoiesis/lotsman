@@ -4,7 +4,48 @@
 > the local hazards — MSYS path traps, em-dash crashes, mpirun silent-fails,
 > SIGTERM-10s drills, ENVIRON bulk rejection, ASE quirks, and the rest.
 
-**Status:** design phase. See [`docs/DESIGN.md`](docs/DESIGN.md).
+**Status:** M1 baseline complete (2026-05-05). 6 RPCs, 66 tests, two daemon CLIs,
+Dockerfile validated on remote Linux Docker. See [`CHANGELOG.md`](CHANGELOG.md)
+and [`docs/DESIGN.md`](docs/DESIGN.md).
+
+## Quick start
+
+```bash
+# Install (development)
+git clone https://github.com/exopoiesis/lotsman
+cd lotsman
+python -m venv .venv
+source .venv/bin/activate   # or .venv\Scripts\activate on Windows
+pip install -e .[dev]
+
+# Generate proto stubs (one-time)
+python -m grpc_tools.protoc -I proto --python_out=src --grpc_python_out=src \
+    proto/lotsman/v1/lotsman.proto
+
+# Run tests (66, ~6s)
+pytest
+
+# Run a Lotsman daemon (in a container or locally for testing)
+lotsman serve --port 50051 --host-id local --jobs-dir /tmp/lotsman/jobs
+
+# In another shell — write Marina config
+mkdir -p ~/.lotsman
+cat > ~/.lotsman/marina.toml <<EOF
+[hosts.local]
+target = "localhost:50051"
+EOF
+
+# Run Marina (MCP-over-stdio for Claude Code etc.)
+marina serve --config ~/.lotsman/marina.toml
+```
+
+Docker validation:
+```bash
+docker build -t lotsman:smoke .
+docker run -d --name lotsman-test lotsman:smoke
+docker cp scripts/docker_smoke.py lotsman-test:/tmp/smoke.py
+docker exec lotsman-test python /tmp/smoke.py
+```
 
 ## Why
 
