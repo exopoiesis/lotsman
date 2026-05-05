@@ -4,6 +4,83 @@ All notable changes to Lotsman are documented here. Format is loosely based on
 [Keep a Changelog](https://keepachangelog.com/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — M2-A: sea abstraction + DockerSea (2026-05-05)
+
+Provider-agnostic hosting. Adds a `Sea` abstraction (gomer / loki / vast /
+runpod / ...) so end-to-end provisioning workflows can be tested on free
+local Docker before any cloud burn.
+
+### Added
+
+- **`marina/seas/` package** — provider abstraction layer:
+  - `base.py` — `Sea` Protocol (search/recommend/create/destroy/stop/start/
+    cost_summary/status/list_instances/renew) + `Offer`, `HostHandle`,
+    `CostBreakdown`, `SeaStatus` frozen dataclasses
+  - `presets.py` — 4 workload presets (`dft_paper_grade`, `dft_smoke`, `mlip`,
+    `aimd_long`) encoding project lessons (FP64 only, GHz≥5.0, reliability
+    floors). `matches(offer, preset)` is pure boolean check.
+  - `registry.py` — module-level `register_sea / get_sea / list_seas`
+    (test helper; production goes through `Hub`)
+  - `factory.py` — `build_sea(name, type, raw)` from a TOML section,
+    dispatching on `type` (`docker_sea` for now; `vast_sea` in M2-B)
+  - `runner.py` — injectable `Runner` Protocol + `subprocess_runner` default,
+    so DockerSea is unit-testable without spawning real `docker`
+  - `docker_sea.py` — `DockerSea` over `docker --context <ctx>`. One container
+    = one host. `--gpus all` only when capability declares a GPU. Auto-names
+    containers `{sea}-{N}`, parses random host port via `docker inspect`.
+    `reliability` defaults to 1.0 (owner-attested) so owned A100 boxes pass
+    `dft_paper_grade`; admin can lower it in config.
+
+- **MCP API** in `marina/mcp_server.py`:
+  - sea queries: `sea_list`, `sea_search`, `sea_recommend`, `sea_status`,
+    `cost_summary` (per-sea or aggregated)
+  - host lifecycle: `host_create(sea, image, ...)`, `host_add` (manual /
+    pre-baked), `host_destroy(name, kill_running?)`, `host_stop`, `host_start`,
+    `host_list(sea?)`
+  - per-job (unchanged from M1): `run`, `status`, `kill`, `logs`, `whoami`
+  - **Renamed**: `host_remove` → `host_destroy`. Sea-managed hosts are torn
+    down through their owning Sea (`docker rm` / `vastai destroy`); manual
+    hosts just close their gRPC channel.
+
+- **Hub (`marina/hub.py`)**: sea registry + per-host gRPC pool. `host_create`
+  delegates to a Sea; the resulting `HostHandle.grpc_target` is wired into
+  the channel pool. `HostEntry.sea` tags ownership for `host_destroy`
+  dispatch. `cost_summary()` aggregates across seas when called without a
+  `sea` argument.
+
+- **Config (`marina/config.py`)**: parses `[seas.NAME]` sections alongside
+  existing `[hosts.NAME]`. Seas auto-registered at `marina serve` startup.
+
+- **Tests** — 80 new (66 → 146 total, ≈6.3 s wall):
+  - 51 L1 unit (`test_seas_base / _presets / _registry / _docker_pure /
+    _factory`, plus `test_marina_config` extensions)
+  - 29 L2 service (`test_seas_docker_subprocess` with `FakeRunner`;
+    `test_marina_hub_seas` with `FakeSea`; `test_marina_mcp_server` extensions
+    covering sea_* / host_create dispatch through the MCP layer)
+
+### Design notes
+
+- "Sea = named instance" was chosen over "sea = type" so users see their
+  registered names in `sea_list()` (e.g. `gomer`, `vast_main`, `vast_grant`)
+  rather than generic types. Two Vast.ai accounts can coexist as separate
+  seas with the same `type=vast_sea`.
+- `host_*` is the unified namespace for lifecycle. There is no `sea_create`
+  ("create a sea?") / `sea_destroy` — only `host_create(sea=...)`.
+- `host_add` survives as a manual escape hatch (pre-baked Lotsman, legacy
+  ssh box) — Marina just registers a gRPC endpoint and forgets.
+
+### Deferred to M2-B
+
+- L3 integration smoke against a real local Docker daemon
+  (`tests/integration/test_seas_docker_real.py`). Needs `docker build .` of
+  `lotsman:latest` first; better as a standalone session.
+- `VastSea` impl (search/recommend/create/destroy via `vastai-python`,
+  handoff-staleness guard on destroy).
+- Watchdog defaults (`gpu_idle`, `scf_plateau`, `disk_low`,
+  `cons_qty_drift`, `oom`).
+- `claude/channel` push prototype.
+- MCP Tasks API integration.
+
 ## [Unreleased] — M1 baseline (2026-05-05)
 
 First end-to-end working baseline. Built test-first across 7 commits in a

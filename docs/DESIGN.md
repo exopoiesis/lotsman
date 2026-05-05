@@ -128,32 +128,92 @@ Open-source, Apache-2. Repo: github.com/exopoiesis/lotsman. Один monorepo с
 
 ## API
 
-API делится на **Marina-only** (host registry, Vast.ai control plane, fleet ops) и **per-job** (run/status/kill/...). Per-job команды Marina проксирует к Lotsman'у на конкретном хосте — host автоматически инферится из `jobId` или передаётся явно в `run()`.
+API делится на **Marina-only** (sea registry, host fleet ops) и **per-job** (run/status/kill/...). Per-job команды Marina проксирует к Lotsman'у на конкретном хосте — host автоматически инферится из `jobId` или передаётся явно в `run()`.
 
-### Marina-only: host registry
+### Sea abstraction (provider-agnostic hosting)
 
-| Команда | Параметры | Назначение |
-|---|---|---|
-| `host_add` | `name`, `ssh_target`, `container?`, `agent_path?` | зарегистрировать хост (manual; для не-Vast machines типа gomer/loki/local) |
-| `host_remove` | `name`, `force?=false` | убрать; refuses если есть live jobs без `force=true` |
-| `host_list` | `state_filter?` | все hosts + connection state + cost/hr + alive_jobs count |
-| `host_status` | `name` | detailed: ssh ok? container alive? lotsman responsive? `whoami()` payload |
-| `kill_all_on_host` | `name`, `confirm: "yes"` | nuke всех jobs (для pre-destroy cleanup) |
-| `harvest_all_done` | `host?: name` | auto-harvest всех `done`/`failed` jobs |
-| `events_all` | `since?` | merged event stream от всех Lotsman'ов |
+**Sea** = именованный провайдер хостинга (gomer, loki, vast_main, runpod_a, lambda, …). У каждого Sea есть имя (registered в `marina.toml` под `[seas.NAME]`) и реализация (`DockerSea` для docker-context-based, `VastSea` для Vast.ai, и т.д.). Marina держит реестр зарегистрированных Sea instances и диспатчит host-команды по `sea` параметру.
 
-### Marina-only: Vast.ai control plane
+Команды поэтому называются **`sea_*`** (метаданные провайдера) и **`host_*`** (lifecycle — единый namespace, провайдер-агностик):
 
-API ключ Vast.ai живёт **только** в Marina config — не передаётся через MCP, не светится в args/transcripts/logs.
-
-#### Search & discovery
+#### Sea registry & queries
 
 | Команда | Параметры | Назначение |
 |---|---|---|
-| `vast_search` | `preset?`, `filters?: dict`, `sort?`, `with_recommended_filters?=true`, `limit?=20` | поиск offers; preset кодирует наши уроки |
-| `vast_recommend` | `workload: dft_paper_grade\|dft_smoke\|mlip\|aimd_long`, `budget_per_hour?`, `min_hours?` | top-3 offers с обоснованием |
-| `vast_image_list` | — | известные `infra-*-gpu` образы + тулы внутри + manifest |
-| `vast_balance` | — | current credit + burn rate + days remaining at current rate |
+| `sea_list` | — | имена всех зарегистрированных морей |
+| `sea_search` | `sea`, `filters?`, `limit?=20` | offers моря (gomer = один static, vast = много динамически) |
+| `sea_recommend` | `sea`, `workload`, `budget_per_hour?`, `min_hours?` | top offers подходящие под `dft_paper_grade\|dft_smoke\|mlip\|aimd_long` |
+| `sea_status` | `sea` | reachable? балансы / burn / детали транспорта |
+| `cost_summary` | `sea?` | total $/hr + per-host breakdown + balance + burn 24h. Без `sea` — aggregated по всем |
+
+#### Host lifecycle (sea-driven, единый namespace)
+
+| Команда | Параметры | Назначение |
+|---|---|---|
+| `host_create` | `sea`, `image`, `name?`, `offer_id?`, `disk_gb?`, `onstart?` | provision новый host в указанном море. Возвращает `{name, sea, instance_id, grpc_target, state, cost_per_hour, ...}`. Auto-register в Hub |
+| `host_add` | `name`, `target` | manual: зарегистрировать существующий gRPC endpoint (без provisioning) — для pre-baked Lotsman'ов и legacy машин |
+| `host_destroy` | `name`, `kill_running?=false` | tear down. Sea-managed → owning sea destroys (`docker rm` / `vastai destroy`); manual → unregister + close channel |
+| `host_stop` / `host_start` | `name` | для морей с stop/start (docker, vast). Restart re-resolves grpc port |
+| `host_list` | `sea?` | все hosts; с `sea=NAME` — только из этого моря |
+| `host_status` | `name` | (M3) detailed: ssh ok? container alive? lotsman responsive? `whoami()` payload |
+| `kill_all_on_host` | `name`, `confirm: "yes"` | (M3) nuke всех jobs (для pre-destroy cleanup) |
+| `harvest_all_done` | `host?: name` | (M3) auto-harvest всех `done`/`failed` jobs |
+
+API ключи для каждого Sea (Vast.ai token, etc.) хранятся **только** в Marina config (`~/.lotsman/marina.toml`), не передаются через MCP, не светятся в args/transcripts/logs.
+
+#### Workload presets
+
+Built-in пресеты в `marina/seas/presets.py` кодируют project lessons (DEADLY_MISTAKES, PROJECT_STATE):
+
+| preset | hard requirements |
+|---|---|
+| `dft_paper_grade` | `requires_fp64=True`, vram≥16, GHz≥5.0, cores≥6, RAM≥16, disk≥80, reliability≥0.95 |
+| `dft_smoke` | `requires_fp64=True`, vram≥12, GHz≥4.5, cores≥4, RAM≥12, disk≥40, reliability≥0.92 |
+| `mlip` | `requires_fp64=False`, vram≥12, GHz≥3.5, cores≥4, RAM≥12, disk≥20 |
+| `aimd_long` | `requires_fp64=True`, vram≥16, GHz≥5.0, cores≥6, RAM≥24, disk≥200, reliability≥0.97 |
+
+Owned hardware (DockerSea) defaults `reliability=1.0` (owner-attested) — admin может опустить в config'е если железо flaky.
+
+#### Sea implementations
+
+| sea type | impl | поддерживает |
+|---|---|---|
+| `docker_sea` | `marina/seas/docker_sea.py` | `docker --context <ctx>` для local или remote Docker hosts (gomer, loki, default). One container = one host. Cost = $0/hr (owned) |
+| `vast_sea` | `marina/seas/vast_sea.py` *(M2-B, pending)* | Vast.ai REST API — search/create/destroy/balance |
+| `runpod_sea` | *(future)* | RunPod / Lambda / Crusoe — provider plug-ins |
+
+Пример конфига `~/.lotsman/marina.toml`:
+
+```toml
+[seas.gomer]
+type = "docker_sea"
+docker_context = "gomer"
+gpu_model = "RTX 4070"
+gpu_count = 1
+vram_gb = 12
+fp64_native = false
+cpu_ghz = 5.7
+cpu_cores = 8
+ram_gb = 32
+disk_gb = 500
+# reliability = 1.0  # default: owner-attested
+
+[seas.loki]
+type = "docker_sea"
+docker_context = "default"
+gpu_model = "none"
+gpu_count = 0
+vram_gb = 0
+fp64_native = false
+cpu_ghz = 4.0
+cpu_cores = 8
+ram_gb = 16
+disk_gb = 200
+
+# (M2-B) [seas.vast]
+# type = "vast_sea"
+# api_key_env = "VASTAI_API_KEY"
+```
 
 **Built-in presets** (кодируют DEADLY_MISTAKES + PROJECT_STATE опыт):
 
@@ -172,31 +232,20 @@ API ключ Vast.ai живёт **только** в Marina config — не пе�
 
 Override: `with_recommended_filters=false` — raw поиск без наших правил.
 
-#### Lifecycle
+#### Vast.ai-specific lifecycle (M2-B, реализуется через `VastSea`)
 
-| Команда | Параметры | Safety |
-|---|---|---|
-| `vast_create` | `offer_id`, `image`, `disk_gb`, `onstart_script?`, `register_as_host?=true`, `host_name?` | none (idempotent на offer level) |
-| `vast_start` | `host_name` | none |
-| `vast_stop` | `host_name`, `harvest_done_first?=true`, `confirm: "yes"` | refuses если live `running` jobs без `force=true` |
-| `vast_destroy` | `host_name`, `harvest_done_first?=true`, `kill_running?=false`, `confirm: "yes"` | **explicit `confirm: "yes"`**; refuses если `running` jobs без `kill_running=true`; refuses если последний user prompt был >30 min назад (handoff ≠ approval) |
-| `vast_list` | `state_filter?` | мои Vast.ai instances (running/stopped) + cost/hr + uptime + alive_jobs |
-| `vast_renew` | `host_name`, `hours: int` | extend rental |
+В M2-A все команды unified через `host_create(sea, ...)` / `host_destroy` / `host_stop` / `host_start`. Vast-специфичные нюансы (renew, harvest_done_first guard) живут внутри `VastSea` impl — **не отдельные MCP команды**:
 
-`vast_create` под капотом:
-1. `vastai create instance offer_id --image image:tag --disk disk_gb` (опционально + onstart_script)
-2. ждёт `running` state (timeout 30 min, fail с диагностикой если `loading` stuck)
-3. SSH key install + container ready check (Lotsman инициализирован?)
-4. `host_add` автоматически если `register_as_host=true`
-5. `whoami()` к Lotsman'у внутри для верификации
-6. возвращает `{host_name, instance_id, ssh_target, lotsman_version, manifest, default_watchdogs}`
+- `vast_create offer_id image disk_gb` → `host_create(sea="vast", image=image, offer_id=offer_id, disk_gb=disk_gb)`. Под капотом VastSea: `vastai create instance` → wait для `running` (30 min timeout) → SSH ключ install → container ready check → `whoami()` для верификации.
+- `vast_destroy host_name` → `host_destroy(name=host_name, kill_running=False)`. VastSea отказывает если live `running` jobs без `kill_running=True`. Refuses если последний user prompt был >30 min назад (handoff ≠ approval, см. CLAUDE.md DEADLY_MISTAKES #7) — это check на Marina-side, реализуется через decorator над host_destroy.
+- `host_renew(name, hours)` (M3) — VastSea extends rental, DockerSea raises NotImplementedError.
 
 #### Cost tracking
 
 | Команда | Возврат |
 |---|---|
-| `cost_summary` | `{total_per_hour, per_host_breakdown[], burn_rate_24h, est_days_remaining_at_balance}` |
-| `cost_history` | `{daily_spend[], top_jobs_by_cost[], idle_waste_estimate}` (idle GPU = burn без compute) |
+| `cost_summary` | `{sea, total_per_hour, per_host[], burn_rate_24h, balance, days_remaining_at_balance}` |
+| `cost_history` | (M3) `{daily_spend[], top_jobs_by_cost[], idle_waste_estimate}` (idle GPU = burn без compute) |
 
 ### Per-job (Marina проксирует к Lotsman)
 
@@ -420,10 +469,11 @@ impossible-to-skip.
 
 - **M0** — design doc + repo scaffold (DONE 2026-05-05).
 - **M1** — **Lotsman + Marina baseline DONE 2026-05-05.** 6 RPCs (Run, Status, Kill, Logs, TailFollow, Whoami), 66 tests passing in <6s, two daemon CLI entry points, Dockerfile validated end-to-end on remote Linux Docker (gomer). KISS scope: single-job-per-Lotsman, TCP gRPC (UDS+SSH deferred), in-memory state. Three M1-marked but deferred items: per-tool image layering (`infra-qe-gpu` + Lotsman), SSH-tunneled UDS transport, harvest streaming RPC.
-- **M2** — multi-host Marina (`host_list` / `events_all` / `kill_all_on_host` / `harvest_all_done`) + **Vast.ai control plane** (`vast_search` / `vast_recommend` / `vast_create` / `vast_destroy` / `cost_summary`) + **watchdog defaults** (gpu_idle, disk_low, scf_plateau, cons_qty_drift, oom) + **MCP Tasks API** + **`claude/channel` push prototype** (acceptance: gpu_idle ночью реально пробуждает Claude Code).
-- **M3** — `prepare_input` / `validate_input` / `lessons_for` для QE и CP2K + **external webhooks** + `cost_history`. Marina становится самодостаточной для всего daily compute workflow (search → create → run → monitor → harvest → destroy).
-- **M4** — третий tool (ABACUS или GPAW) + опциональный SSH-multiplex для Marina↔Lotsman (snappier).
-- **M5** — HTTP/SSE transport между Marina↔Lotsman (опция помимо ssh stdio) + provider abstraction (RunPod, Lambda, Crusoe — Vast.ai становится одним из).
+- **M2-A — sea abstraction + DockerSea DONE 2026-05-05.** Provider-agnostic `Sea` Protocol (search/recommend/create/destroy/stop/start/cost_summary/status), `DockerSea` impl over `docker --context <ctx>` (gomer/loki/local). Workload presets `dft_paper_grade / dft_smoke / mlip / aimd_long` encoding project DEADLY_MISTAKES (FP64 only, GHz≥5.0, reliability≥0.95). Marina config `[seas.NAME]` sections + factory dispatch. MCP API: `sea_list / sea_search / sea_recommend / sea_status / cost_summary` + `host_create / host_add / host_destroy / host_stop / host_start / host_list`. Bumps total tests 66→146, all green in 6s. Provisioning testable on free local docker — no Vast.ai burn.
+- **M2-B — Vast.ai sea + watchdogs.** `VastSea` impl (search via vastai-python, create with SSH key install + Lotsman handshake, destroy with handoff-staleness guard). Watchdog defaults (gpu_idle, scf_plateau, disk_low, cons_qty_drift, oom). MCP Tasks API. `claude/channel` push prototype (acceptance: gpu_idle ночью реально пробуждает Claude Code).
+- **M3** — `prepare_input` / `validate_input` / `lessons_for` для QE и CP2K + **external webhooks** + `cost_history` + `host_status / kill_all_on_host / harvest_all_done`. Marina становится самодостаточной для всего daily compute workflow (search → create → run → monitor → harvest → destroy).
+- **M4** — третий tool (ABACUS или GPAW) + опциональный SSH-multiplex для Marina↔Lotsman (snappier) + RunPod/Lambda/Crusoe seas.
+- **M5** — HTTP/SSE transport между Marina↔Lotsman (опция помимо ssh stdio).
 - **M6** — public release, blog post, первый external user.
 
 ---
@@ -453,13 +503,18 @@ lotsman/
 ├── marina/                      local hub (MCP server + gRPC client)
 │   ├── pyproject.toml
 │   ├── src/marina/
-│   │   ├── mcp_server.py        MCP face к Claude Code
-│   │   ├── grpc_client.py       gRPC client к Lotsman'ам
-│   │   ├── routing.py           jobId → host
-│   │   ├── connection_pool.py   ssh-tunneled UDS, auto-reconnect
-│   │   ├── vast/                control plane (search/recommend/create/...)
-│   │   ├── hosts/               registry + persistence (sqlite)
-│   │   └── secrets.py           env scrubber + log sanitizer
+│   │   ├── mcp_server.py        MCP face к Claude Code (sea_*/host_*/run/...)
+│   │   ├── hub.py               sea registry + host registry + per-job routing
+│   │   ├── config.py            marina.toml parser ([hosts.*] + [seas.*])
+│   │   ├── router.py            jobId → host
+│   │   └── seas/                provider abstraction
+│   │       ├── base.py          Sea Protocol + Offer/HostHandle/CostBreakdown
+│   │       ├── presets.py       workload presets (dft_paper_grade/...)
+│   │       ├── registry.py      module-level Sea registry (test helper)
+│   │       ├── factory.py       build_sea(name, type, raw) → Sea
+│   │       ├── runner.py        injectable subprocess runner (testability)
+│   │       ├── docker_sea.py    DockerSea: docker --context <ctx>
+│   │       └── vast_sea.py      (M2-B) VastSea: vastai-python
 │   └── tests/                   { unit, service, integration }
 ├── lotsman-cli/                 thin gRPC CLI для standalone Lotsman debug
 │   └── src/lotsman_cli/

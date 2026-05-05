@@ -7,6 +7,7 @@ from pathlib import Path
 from marina.config import load_config
 from marina.hub import Hub
 from marina.mcp_server import make_mcp_server
+from marina.seas.factory import build_sea
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -14,12 +15,29 @@ def cmd_serve(args: argparse.Namespace) -> int:
     cfg = load_config(config_path)
 
     hub = Hub()
+    for sea_cfg in cfg.seas:
+        sea = build_sea(sea_cfg.name, sea_cfg.type, sea_cfg.raw)
+        hub.sea_register(sea)
+        print(
+            f"Marina: registered sea {sea_cfg.name!r} (type={sea_cfg.type})",
+            file=sys.stderr,
+            flush=True,
+        )
     for host in cfg.hosts:
         hub.host_add(host.name, host.target)
-        print(f"Marina: registered host {host.name!r} -> {host.target}", file=sys.stderr, flush=True)
+        print(
+            f"Marina: registered host {host.name!r} -> {host.target}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     server = make_mcp_server(hub, name="Marina")
-    print(f"Marina: serving MCP over stdio ({len(cfg.hosts)} host(s) loaded)", file=sys.stderr, flush=True)
+    print(
+        f"Marina: serving MCP over stdio "
+        f"({len(cfg.seas)} sea(s), {len(cfg.hosts)} host(s) loaded)",
+        file=sys.stderr,
+        flush=True,
+    )
 
     try:
         server.run()
@@ -29,7 +47,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="marina", description="Marina local hub for Lotsman fleet")
+    parser = argparse.ArgumentParser(
+        prog="marina", description="Marina local hub for Lotsman fleet"
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_serve = sub.add_parser("serve", help="Run MCP server over stdio")

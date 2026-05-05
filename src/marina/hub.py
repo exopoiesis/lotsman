@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 import grpc
 
 from lotsman.v1 import lotsman_pb2, lotsman_pb2_grpc
 from marina.router import parse_job_id
+from marina.seas.base import CostBreakdown, HostHandle, Offer, Sea, SeaStatus
 
 
 class HostError(Exception):
+    pass
+
+
+class SeaNotFoundError(Exception):
     pass
 
 
@@ -18,26 +25,184 @@ class HostEntry:
     target: str
     channel: grpc.Channel
     stub: lotsman_pb2_grpc.LotsmanServiceStub
+    sea: str | None = None  # set when host was created via a Sea
 
 
 class Hub:
-    def __init__(self) -> None:
-        self.hosts: dict[str, HostEntry] = {}
+    """In-process router from MCP tool calls to per-host gRPC stubs.
 
-    def host_add(self, name: str, target: str) -> None:
+    Owns:
+      • host registry (name → gRPC channel/stub),
+      • sea registry (name → Sea instance for provisioning).
+
+    `host_add` / `host_remove` register existing endpoints (manual mode).
+    `host_create` / `host_destroy` go through a Sea (provisions/tears down a
+    container or VM and updates the host registry as a side effect).
+    """
+
+    def __init__(self, seas: Iterable[Sea] | None = None) -> None:
+        self.hosts: dict[str, HostEntry] = {}
+        self.seas: dict[str, Sea] = {}
+        if seas:
+            for sea in seas:
+                self.sea_register(sea)
+
+    # ---- sea registry ----
+
+    def sea_register(self, sea: Sea) -> None:
+        if sea.name in self.seas:
+            raise SeaNotFoundError(f"sea {sea.name!r} already registered")
+        self.seas[sea.name] = sea
+
+    def sea_get(self, name: str) -> Sea:
+        if name not in self.seas:
+            raise SeaNotFoundError(f"unknown sea: {name!r}")
+        return self.seas[name]
+
+    def sea_list(self) -> list[str]:
+        return sorted(self.seas)
+
+    # ---- host registry (manual) ----
+
+    def host_add(self, name: str, target: str, *, sea: str | None = None) -> None:
         if name in self.hosts:
             raise HostError(f"host {name!r} already registered")
         channel = grpc.insecure_channel(target)
         stub = lotsman_pb2_grpc.LotsmanServiceStub(channel)
-        self.hosts[name] = HostEntry(name=name, target=target, channel=channel, stub=stub)
+        self.hosts[name] = HostEntry(
+            name=name, target=target, channel=channel, stub=stub, sea=sea
+        )
 
     def host_remove(self, name: str) -> None:
         entry = self.hosts.pop(name, None)
         if entry is not None:
             entry.channel.close()
 
-    def host_list(self) -> list[str]:
-        return list(self.hosts)
+    def host_list(self, sea: str | None = None) -> list[str]:
+        if sea is None:
+            return sorted(self.hosts)
+        return sorted(name for name, e in self.hosts.items() if e.sea == sea)
+
+    # ---- host lifecycle (sea-driven) ----
+
+    def host_create(
+        self,
+        sea: str,
+        image: str,
+        *,
+        name: str | None = None,
+        offer_id: str | None = None,
+        disk_gb: int | None = None,
+        onstart: str | None = None,
+    ) -> HostHandle:
+        s = self.sea_get(sea)
+        handle = s.create(
+            image,
+            offer_id=offer_id,
+            name=name,
+            disk_gb=disk_gb,
+            onstart=onstart,
+        )
+        if handle.name in self.hosts:
+            # Sea created a container but the name collides with an existing
+            # registry entry — roll back to keep state consistent.
+            try:
+                s.destroy(handle.name, kill_running=True)
+            except Exception:  # pragma: no cover — best-effort rollback
+                pass
+            raise HostError(
+                f"host {handle.name!r} already registered; sea provisioned "
+                f"a duplicate and was rolled back"
+            )
+        self.host_add(handle.name, handle.grpc_target, sea=handle.sea)
+        return handle
+
+    def host_destroy(
+        self, name: str, *, kill_running: bool = False
+    ) -> None:
+        """Tear down a host.
+
+        For sea-managed hosts the owning sea is asked to destroy first
+        (e.g. `docker rm -f <container>`), then the local registry entry is
+        closed. For manually-added hosts (no sea) we just close the channel
+        and forget — Marina doesn't own the box, so we can't destroy it.
+        """
+        entry = self.hosts.get(name)
+        if entry is None:
+            raise HostError(f"unknown host: {name!r}")
+        if entry.sea is not None:
+            self.sea_get(entry.sea).destroy(name, kill_running=kill_running)
+        self.host_remove(name)
+
+    def host_stop(self, name: str) -> None:
+        entry = self.hosts.get(name)
+        if entry is None or entry.sea is None:
+            raise HostError(f"host {name!r} not stop-able (no sea)")
+        self.sea_get(entry.sea).stop(name)
+
+    def host_start(self, name: str) -> None:
+        entry = self.hosts.get(name)
+        if entry is None or entry.sea is None:
+            raise HostError(f"host {name!r} not start-able (no sea)")
+        self.sea_get(entry.sea).start(name)
+        # Sea may have re-resolved the gRPC target on restart; resync.
+        new_handle = self._sea_handle(entry.sea, name)
+        if new_handle is not None and new_handle.grpc_target != entry.target:
+            self.host_remove(name)
+            self.host_add(name, new_handle.grpc_target, sea=entry.sea)
+
+    def _sea_handle(self, sea_name: str, host_name: str) -> HostHandle | None:
+        for h in self.sea_get(sea_name).list_instances():
+            if h.name == host_name:
+                return h
+        return None
+
+    # ---- sea queries ----
+
+    def sea_search(
+        self,
+        sea: str,
+        filters: dict[str, Any] | None = None,
+        limit: int = 20,
+    ) -> list[Offer]:
+        return self.sea_get(sea).search(filters=filters, limit=limit)
+
+    def sea_recommend(
+        self,
+        sea: str,
+        workload: str,
+        budget_per_hour: float | None = None,
+        min_hours: int | None = None,
+    ) -> list[Offer]:
+        return self.sea_get(sea).recommend(
+            workload, budget_per_hour=budget_per_hour, min_hours=min_hours
+        )
+
+    def sea_status(self, sea: str) -> SeaStatus:
+        return self.sea_get(sea).status()
+
+    def cost_summary(self, sea: str | None = None) -> CostBreakdown:
+        if sea is not None:
+            return self.sea_get(sea).cost_summary()
+        # aggregate across all seas
+        per_host: list[tuple[str, float]] = []
+        balance: float | None = None
+        burn_24h = 0.0
+        for s in self.seas.values():
+            cb = s.cost_summary()
+            per_host.extend(cb.per_host)
+            burn_24h += cb.burn_rate_24h
+            if cb.balance is not None:
+                balance = (balance or 0.0) + cb.balance
+        return CostBreakdown(
+            sea=None,
+            total_per_hour=sum(c for _, c in per_host),
+            per_host=tuple(per_host),
+            balance=balance,
+            burn_rate_24h=burn_24h,
+        )
+
+    # ---- per-job RPC routing ----
 
     def _stub_for(self, host_name: str) -> lotsman_pb2_grpc.LotsmanServiceStub:
         if host_name not in self.hosts:
@@ -81,3 +246,4 @@ class Hub:
         for entry in self.hosts.values():
             entry.channel.close()
         self.hosts.clear()
+        self.seas.clear()
