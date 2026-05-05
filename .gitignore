@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build artifacts (when MVP lands)
+target/
+bin/
+*.exe
+*.bin
+
+# Lotsman runtime state (should never be committed; lives in container)
+/var/lotsman/
+audit.log
+*.lock
+
+# Temp files / scratch
+tmp/
+scratch/
+*.bak
+*.tmp
+
+# Local env / secrets (defence in depth — should never reach repo)
+.env
+.env.local
+secrets.d/
+*.pem
+*.key

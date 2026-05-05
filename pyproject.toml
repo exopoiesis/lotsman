@@ -1,0 +1,53 @@
+[project]
+name = "lotsman"
+version = "0.1.0"
+description = "In-container daemon for compute tools (DFT, AIMD, MD on ephemeral cloud)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Igor Morozov", email = "igor@exopoiesis.space" }]
+requires-python = ">=3.11"
+dependencies = [
+  "grpcio>=1.65",
+  "protobuf>=4.25",
+  "python-ulid>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools>=1.65",
+  "grpcio-testing>=1.65",
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lotsman*"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+exclude = ["src/lotsman/v1"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+exclude = ["src/lotsman/v1/.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "unit: fast pure-logic tests",
+  "service: in-process gRPC service tests",
+  "integration: testcontainers-based tests",
+  "e2e: full stack with real ssh and host",
+]

@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package lotsman.v1;
+
+// Lotsman service is the in-container daemon RPC contract.
+// Marina is the only expected client; gRPC over SSH-forwarded UDS.
+service LotsmanService {
+  // Run launches a script under the daemon's supervision and
+  // returns a jobId of the form `<hostId>/<ulid26>`.
+  rpc Run(RunRequest) returns (RunResponse);
+
+  // Status returns the current lifecycle state of a known job.
+  // Returns NOT_FOUND if jobId is unknown.
+  rpc Status(StatusRequest) returns (StatusResponse);
+
+  // Kill terminates a running job: SIGTERM, wait grace_sec, then SIGKILL.
+  // Idempotent on already-terminal jobs.
+  // Returns NOT_FOUND if jobId is unknown.
+  rpc Kill(KillRequest) returns (KillResponse);
+
+  // Logs returns a snapshot of stdout/stderr for a job.
+  // Use TailFollow for live streaming (added later).
+  // Returns NOT_FOUND if jobId is unknown.
+  rpc Logs(LogsRequest) returns (LogsResponse);
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  PENDING = 1;
+  RUNNING = 2;
+  DONE = 3;
+  FAILED = 4;
+  KILLED = 5;
+  ORPHANED = 6;
+}
+
+message RunRequest {
+  string script = 1;
+  optional string name = 2;
+  optional string wd = 3;
+  map<string, string> env = 4;
+  // NOTE: singleton_key dropped (KISS, 2026-05-05) — one running job per
+  // Lotsman is enforced; concurrent jobs not supported until needed.
+}
+
+message RunResponse {
+  string job_id = 1;
+  JobState state = 2;
+}
+
+message StatusRequest {
+  string job_id = 1;
+}
+
+message StatusResponse {
+  string job_id = 1;
+  JobState state = 2;
+  optional int32 exit_code = 3;
+  optional int64 started_at_unix_ms = 4;
+  optional int64 finished_at_unix_ms = 5;
+}
+
+message KillRequest {
+  string job_id = 1;
+  optional float grace_sec = 2;  // SIGTERM wait before SIGKILL; default 10
+  optional bool force = 3;       // skip SIGTERM, go straight to SIGKILL
+}
+
+message KillResponse {
+  string job_id = 1;
+  bool killed = 2;               // true if a running process was actually terminated
+  JobState state = 3;            // final state (KILLED, DONE if already done, etc.)
+  optional int32 exit_code = 4;
+}
+
+message LogsRequest {
+  string job_id = 1;
+  // If set, return only the last N lines (per stream).
+  optional uint32 tail_lines = 2;
+  // If true, include stderr as well (default: stdout only).
+  bool include_stderr = 3;
+}
+
+message LogsResponse {
+  string job_id = 1;
+  bytes stdout = 2;
+  bytes stderr = 3;  // empty unless include_stderr=true
+  // Number of bytes available in the source files at read time
+  // (so caller can detect "more was added since")
+  uint64 stdout_total_bytes = 4;
+  uint64 stderr_total_bytes = 5;
+}
