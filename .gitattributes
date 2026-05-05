@@ -1,0 +1,15 @@
+# Force LF line endings everywhere — Lotsman runs in Linux containers,
+# Windows dev machines should not corrupt scripts on checkout.
+* text=auto eol=lf
+
+# Explicit by extension for safety
+*.py    text eol=lf
+*.sh    text eol=lf
+*.proto text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Generated proto stubs — diff-friendly
+src/lotsman/v1/*.py text eol=lf linguist-generated=true
