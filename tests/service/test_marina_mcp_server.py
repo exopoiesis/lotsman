@@ -27,6 +27,11 @@ EXPECTED_TOOLS = {
     "kill",
     "logs",
     "whoami",
+    # watchdogs / events
+    "watchdog_list",
+    "watchdog_history",
+    "events",
+    "events_all",
 }
 
 

@@ -152,6 +152,24 @@ def test_create_dispatches_docker_run_with_context_and_gpus() -> None:
     ]
 
 
+def test_create_passes_through_env_kwarg() -> None:
+    runner = FakeRunner()
+    runner.expect(_has_subcommand("run"), RunResult(0, "cid\n", ""))
+    runner.expect(_has_subcommand("inspect"), RunResult(0, _INSPECT_PORTS_OK, ""))
+
+    sea = _make_sea(runner)
+    sea.create(
+        "img",
+        name="gomer-1",
+        env={"LOTSMAN_DISK_LOW_GB": "999", "FOO": "bar"},
+    )
+
+    run_call = runner.calls[0]
+    # Both env entries must show up as -e KEY=VAL pairs
+    assert "LOTSMAN_DISK_LOW_GB=999" in run_call.argv
+    assert "FOO=bar" in run_call.argv
+
+
 def test_create_no_gpu_flag_when_capability_has_no_gpu() -> None:
     runner = FakeRunner()
     runner.expect(

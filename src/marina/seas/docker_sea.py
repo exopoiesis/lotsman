@@ -167,6 +167,7 @@ class DockerSea:
         name: str | None = None,
         disk_gb: int | None = None,
         onstart: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> HostHandle:
         del offer_id, disk_gb, onstart  # docker sea ignores these (M2-A scope)
         host_name = name or self._auto_name()
@@ -194,6 +195,9 @@ class DockerSea:
             "-p",
             f"0:{_LOTSMAN_CONTAINER_PORT}",
         ]
+        if env:
+            for k, v in env.items():
+                argv += ["-e", f"{k}={v}"]
         if self.capability.gpu_count > 0:
             argv += ["--gpus", "all"]
         # Pass --host-id explicitly so Lotsman's job_id prefix matches the

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 from concurrent import futures
@@ -11,6 +12,33 @@ import grpc
 
 from lotsman.server import LotsmanService
 from lotsman.v1 import lotsman_pb2_grpc
+from lotsman.watchdogs import DiskLowCheck, GpuIdleCheck, ProcessExitOomCheck
+
+
+def _watchdog_defaults_from_env() -> list:
+    """Build the production default watchdog set, with env-var overrides.
+
+    Env vars:
+      LOTSMAN_DISK_LOW_GB         (default 5.0)
+      LOTSMAN_DISK_LOW_INTERVAL_S (default 60)
+      LOTSMAN_GPU_IDLE_PCT        (default 5.0)
+      LOTSMAN_GPU_IDLE_SECONDS    (default 1800)
+      LOTSMAN_GPU_IDLE_INTERVAL_S (default 60)
+    """
+    disk_low_gb = float(os.environ.get("LOTSMAN_DISK_LOW_GB", "5.0"))
+    disk_low_interval = float(os.environ.get("LOTSMAN_DISK_LOW_INTERVAL_S", "60"))
+    gpu_idle_pct = float(os.environ.get("LOTSMAN_GPU_IDLE_PCT", "5.0"))
+    gpu_idle_seconds = float(os.environ.get("LOTSMAN_GPU_IDLE_SECONDS", "1800"))
+    gpu_idle_interval = float(os.environ.get("LOTSMAN_GPU_IDLE_INTERVAL_S", "60"))
+    return [
+        DiskLowCheck(threshold_gb=disk_low_gb, interval_sec=disk_low_interval),
+        ProcessExitOomCheck(),
+        GpuIdleCheck(
+            threshold_pct=gpu_idle_pct,
+            idle_seconds=gpu_idle_seconds,
+            interval_sec=gpu_idle_interval,
+        ),
+    ]
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -19,6 +47,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         host_id=args.host_id,
         jobs_dir=Path(args.jobs_dir),
         manifest_path=Path(args.manifest) if args.manifest else None,
+        default_checks=_watchdog_defaults_from_env(),
     )
     lotsman_pb2_grpc.add_LotsmanServiceServicer_to_server(servicer, server)
 

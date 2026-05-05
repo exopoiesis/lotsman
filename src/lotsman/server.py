@@ -411,6 +411,21 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
             job_id=request.job_id, events=list(events)
         )
 
+    def EventsHistoryAll(
+        self,
+        request: lotsman_pb2.EventsHistoryAllRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.EventsHistoryAllResponse:
+        all_events: list[lotsman_pb2.Event] = []
+        since = request.since_unix_ms
+        for events in self._event_log.values():
+            for ev in events:
+                if since > 0 and ev.unix_ms < since:
+                    continue
+                all_events.append(ev)
+        all_events.sort(key=lambda e: e.unix_ms)
+        return lotsman_pb2.EventsHistoryAllResponse(events=all_events)
+
     def shutdown(self) -> None:
         self.supervisor.stop()
         for job in self.jobs.values():

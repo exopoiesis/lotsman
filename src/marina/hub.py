@@ -94,6 +94,7 @@ class Hub:
         offer_id: str | None = None,
         disk_gb: int | None = None,
         onstart: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> HostHandle:
         s = self.sea_get(sea)
         handle = s.create(
@@ -102,6 +103,7 @@ class Hub:
             name=name,
             disk_gb=disk_gb,
             onstart=onstart,
+            env=env,
         )
         if handle.name in self.hosts:
             # Sea created a container but the name collides with an existing
@@ -241,6 +243,55 @@ class Hub:
 
     def whoami(self, host: str) -> lotsman_pb2.WhoamiResponse:
         return self._stub_for(host).Whoami(lotsman_pb2.WhoamiRequest())
+
+    # ---- watchdogs / events ----
+
+    def watchdog_list(
+        self, job_id: str
+    ) -> lotsman_pb2.WatchdogListResponse:
+        return self._route(job_id).WatchdogList(
+            lotsman_pb2.WatchdogListRequest(job_id=job_id)
+        )
+
+    def watchdog_history(
+        self, job_id: str, since_unix_ms: int = 0
+    ) -> lotsman_pb2.WatchdogHistoryResponse:
+        return self._route(job_id).WatchdogHistory(
+            lotsman_pb2.WatchdogHistoryRequest(
+                job_id=job_id, since_unix_ms=since_unix_ms
+            )
+        )
+
+    def events(
+        self, job_id: str, since_unix_ms: int = 0
+    ) -> lotsman_pb2.WatchdogHistoryResponse:
+        """Snapshot of past events for a job. Alias of watchdog_history."""
+        return self.watchdog_history(job_id, since_unix_ms=since_unix_ms)
+
+    def events_all(
+        self, since_unix_ms: int = 0, hosts: list[str] | None = None
+    ) -> dict[str, list[lotsman_pb2.Event]]:
+        """Aggregate events across all (or filtered) hosts.
+
+        One round-trip per host via EventsHistoryAll. A host whose RPC
+        fails contributes an empty list (the failure is silently swallowed
+        — this aggregator is observability, not a transactional barrier).
+        """
+        targets = hosts if hosts is not None else list(self.hosts)
+        out: dict[str, list[lotsman_pb2.Event]] = {}
+        for name in targets:
+            entry = self.hosts.get(name)
+            if entry is None:
+                out[name] = []
+                continue
+            try:
+                resp = entry.stub.EventsHistoryAll(
+                    lotsman_pb2.EventsHistoryAllRequest(since_unix_ms=since_unix_ms)
+                )
+                out[name] = list(resp.events)
+            except grpc.RpcError:
+                out[name] = []
+        return out
 
     def shutdown(self) -> None:
         for entry in self.hosts.values():

@@ -102,6 +102,7 @@ class Sea(Protocol):
         name: str | None = None,
         disk_gb: int | None = None,
         onstart: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> HostHandle: ...
 
     def destroy(self, host_name: str, *, kill_running: bool = False) -> None: ...

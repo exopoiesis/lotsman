@@ -47,6 +47,11 @@ service LotsmanService {
   // WatchdogHistory returns past fired events for a job — what crossed
   // a threshold and when. Returns NOT_FOUND if jobId is unknown.
   rpc WatchdogHistory(WatchdogHistoryRequest) returns (WatchdogHistoryResponse);
+
+  // EventsHistoryAll returns all events across every job on this Lotsman
+  // since `since_unix_ms`. Marina uses it to aggregate fan-out without
+  // needing to enumerate jobIds first.
+  rpc EventsHistoryAll(EventsHistoryAllRequest) returns (EventsHistoryAllResponse);
 }
 
 enum JobState {
@@ -203,4 +208,12 @@ message WatchdogHistoryRequest {
 message WatchdogHistoryResponse {
   string job_id = 1;
   repeated Event events = 2;
+}
+
+message EventsHistoryAllRequest {
+  int64 since_unix_ms = 1;
+}
+
+message EventsHistoryAllResponse {
+  repeated Event events = 1;
 }

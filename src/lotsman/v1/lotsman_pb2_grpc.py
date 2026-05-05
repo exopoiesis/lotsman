@@ -81,6 +81,11 @@ class LotsmanServiceStub(object):
                 request_serializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryRequest.SerializeToString,
                 response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryResponse.FromString,
                 _registered_method=True)
+        self.EventsHistoryAll = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/EventsHistoryAll',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllResponse.FromString,
+                _registered_method=True)
 
 
 class LotsmanServiceServicer(object):
@@ -167,6 +172,15 @@ class LotsmanServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EventsHistoryAll(self, request, context):
+        """EventsHistoryAll returns all events across every job on this Lotsman
+        since `since_unix_ms`. Marina uses it to aggregate fan-out without
+        needing to enumerate jobIds first.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LotsmanServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -214,6 +228,11 @@ def add_LotsmanServiceServicer_to_server(servicer, server):
                     servicer.WatchdogHistory,
                     request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryRequest.FromString,
                     response_serializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryResponse.SerializeToString,
+            ),
+            'EventsHistoryAll': grpc.unary_unary_rpc_method_handler(
+                    servicer.EventsHistoryAll,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -461,6 +480,33 @@ class LotsmanService(object):
             '/lotsman.v1.LotsmanService/WatchdogHistory',
             lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryRequest.SerializeToString,
             lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EventsHistoryAll(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/EventsHistoryAll',
+            lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllResponse.FromString,
             options,
             channel_credentials,
             insecure,

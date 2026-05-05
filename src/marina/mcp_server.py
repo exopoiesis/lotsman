@@ -169,6 +169,42 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
             "known_pitfalls": list(resp.known_pitfalls),
         }
 
+    # ---- watchdogs / events ----
+
+    @mcp.tool()
+    def watchdog_list(job_id: str) -> list[dict[str, Any]]:
+        """Active watchdogs for a job (defaults from manifest + extras)."""
+        resp = hub.watchdog_list(job_id)
+        return [_watchdog_to_dict(w) for w in resp.watchdogs]
+
+    @mcp.tool()
+    def watchdog_history(
+        job_id: str, since_unix_ms: int = 0
+    ) -> list[dict[str, Any]]:
+        """Past fired events for a job. since_unix_ms=0 returns all history."""
+        resp = hub.watchdog_history(job_id, since_unix_ms=since_unix_ms)
+        return [_event_to_dict(e) for e in resp.events]
+
+    @mcp.tool()
+    def events(job_id: str, since_unix_ms: int = 0) -> list[dict[str, Any]]:
+        """Snapshot of events for a job (alias of watchdog_history)."""
+        return watchdog_history(job_id, since_unix_ms=since_unix_ms)
+
+    @mcp.tool()
+    def events_all(
+        since_unix_ms: int = 0, hosts: str = ""
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Aggregate events across the fleet.
+
+        Pass hosts as a comma-separated list to filter; default = all hosts.
+        Returns {host_name: [event_dict, ...]}.
+        """
+        host_filter = (
+            [h.strip() for h in hosts.split(",") if h.strip()] if hosts else None
+        )
+        per_host = hub.events_all(since_unix_ms=since_unix_ms, hosts=host_filter)
+        return {h: [_event_to_dict(e) for e in events] for h, events in per_host.items()}
+
     return mcp
 
 
@@ -203,4 +239,25 @@ def _handle_to_dict(h: Any) -> dict[str, Any]:
         "cost_per_hour": h.cost_per_hour,
         "created_at_unix_ms": h.created_at_unix_ms,
         "ssh_target": h.ssh_target,
+    }
+
+
+def _watchdog_to_dict(w: Any) -> dict[str, Any]:
+    return {
+        "name": w.name,
+        "fired": w.fired,
+        "action": w.action,
+        "interval_sec": w.interval_sec,
+    }
+
+
+def _event_to_dict(e: Any) -> dict[str, Any]:
+    return {
+        "job_id": e.job_id,
+        "watchdog_name": e.watchdog_name,
+        "event_type": e.event_type,
+        "unix_ms": e.unix_ms,
+        "detail": e.detail,
+        "severity": e.severity,
+        "data": dict(e.data),
     }

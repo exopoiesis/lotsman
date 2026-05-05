@@ -73,6 +73,7 @@ class FakeSea:
         name: str | None = None,
         disk_gb: int | None = None,
         onstart: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> HostHandle:
         host_name = name or f"{self.name}-{self._next_id}"
         self._next_id += 1
@@ -83,6 +84,7 @@ class FakeSea:
                 name=host_name,
                 disk_gb=disk_gb,
                 onstart=onstart,
+                env=env,
             )
         )
         handle = HostHandle(
