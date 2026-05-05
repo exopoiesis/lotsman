@@ -4,6 +4,110 @@ All notable changes to Lotsman are documented here. Format is loosely based on
 [Keep a Changelog](https://keepachangelog.com/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — M2-B: watchdog system + events fan-out (2026-05-05)
+
+Watchdog framework, three default checks, gRPC RPCs for events, Marina
+fan-out, and an end-to-end L3 test on a real Docker container that forces
+a `disk_low` fire and observes it through Marina. The "save my night"
+foundation.
+
+### Added
+
+- **`lotsman/watchdogs/` package**:
+  - `base.py` — `Check` Protocol, `CheckResult` (severity: notify | kill |
+    checkpoint), `WatchdogContext` (frozen, read-only view of a job's
+    state on each tick).
+  - `checks.py` — three production-ready checks:
+    - `DiskLowCheck` (default 5 GB threshold; s126 lesson)
+    - `ProcessExitOomCheck` (post-mortem fire on exit codes 9 / 137)
+    - `GpuIdleCheck` (default 30-min window at <5% utilization;
+      `nvidia-smi` shell-out, no-op without it; cost rationale: idle
+      A100 = $0.70/hr drain)
+  - `supervisor.py` — thread-safe `Supervisor` with `register/unregister/
+    list_watchdogs/history/all_history/fired_names/tick/start/stop/
+    add_listener`. Fires at most once per check (idempotent — first
+    crossing wins). Buggy checks and listeners can't break the loop.
+
+- **gRPC RPCs** (proto bumped, stubs regenerated):
+  - `Events(EventsRequest) returns (stream Event)` — server-streaming
+    live + replay. `since_unix_ms > 0` replays history; client cancellation
+    cleans up subscription.
+  - `WatchdogList(WatchdogListRequest)` — current watchdog set + fired
+    status per check.
+  - `WatchdogHistory(WatchdogHistoryRequest)` — past fired events for a
+    job, with optional `since_unix_ms` cutoff.
+  - `EventsHistoryAll(EventsHistoryAllRequest)` — all events across every
+    job on this Lotsman, sorted by time. Marina uses it for fleet fan-out
+    in one round-trip per host.
+
+- **LotsmanService wiring**:
+  - Each instance owns a Supervisor + per-job `_event_log` + listener.
+  - `default_checks` / `default_checks_factory` ctor knobs choose the
+    auto-attached set. Production default = the three checks above.
+  - `Run` registers the default check set under the new jobId before
+    returning. Supervisor.start at __init__; shutdown stops it cleanly.
+  - Watchdog tunables read from env at `lotsman serve` startup:
+    `LOTSMAN_DISK_LOW_GB`, `LOTSMAN_DISK_LOW_INTERVAL_S`,
+    `LOTSMAN_GPU_IDLE_PCT`, `LOTSMAN_GPU_IDLE_SECONDS`,
+    `LOTSMAN_GPU_IDLE_INTERVAL_S`. Admin can tune per-host without
+    rebuilding the image; tests force-fire via env override.
+
+- **Sea / Hub**:
+  - `Sea` Protocol gains `env: dict[str, str] | None` on `create()`.
+    DockerSea appends `-e KEY=VAL` flags. Hub.host_create propagates.
+  - `Hub.watchdog_list / watchdog_history` route per-job by jobId prefix.
+  - `Hub.events(jobId)` — alias of watchdog_history.
+  - `Hub.events_all(since=0, hosts=None)` — fan-out across registered
+    hosts via EventsHistoryAll. A failed RPC contributes []
+    (observability, not transactional).
+
+- **MCP tools**: `watchdog_list`, `watchdog_history`, `events`,
+  `events_all`. `events_all` takes `hosts="a,b"` comma-string for filter
+  (or empty = all).
+
+- **`scripts/marina.example.toml`** — annotated config example with
+  `[hosts.*]` and `[seas.*]` blocks.
+
+### Tested
+
+- 49 new tests (146 → 195 total, ruff clean, ~84 s wall incl. one
+  Docker rebuild for L3 watchdog smoke):
+  - 27 L1 unit (`test_watchdogs_checks` 14 + `test_watchdogs_supervisor`
+    13)
+  - 9 L2 service for new RPCs (`test_events_basic`)
+  - 7 L2 hub fan-out (`test_marina_events_hub` — two-Lotsman
+    aggregation, host filter, since filter, dead-host swallow)
+  - 4 MCP face expansions
+  - 1 L2 docker subprocess (env passthrough)
+  - 2 L3 integration (`test_watchdogs_real`):
+    - Defaults attached after `Run`
+    - `disk_low` fires within 10 s when forced via env, observed via
+      Marina `events_all` → `EventsHistoryAll` against a real container.
+      This is the same path Claude Code uses overnight to spot zombies.
+
+### Deferred (upstream blockers)
+
+- **Tier 2 — native MCP Tasks API.** `mcp` Python SDK 1.26.0 ships the
+  Task *types* (`Task`, `TaskStatus`, `tasks/get`, `TaskStatusNotification`)
+  but neither `FastMCP` nor lowlevel `Server` surfaces task **handlers**.
+  Implementing requires raw protocol-handler registration plus uncertain
+  client-side support (does Claude Code 2.1.x actually call `tasks/get`
+  on a tool result tagged as a Task? unknown). Revisit when SDK exposes
+  task handlers natively.
+
+- **Tier 3 — `claude/channel` push (real-time wake-from-sleep).**
+  Undocumented in standard MCP; Claude Code-specific capability with
+  the design-doc caveat that behavior may have shifted between releases.
+  Standard MCP `LoggingMessageNotification` and `ProgressNotification`
+  are available but only flow within an active session — they don't
+  wake a sleeping Claude Code.
+
+  In the meantime: **Tier 1 polling (this release) is fully sufficient**
+  for the `/loop` + `ScheduleWakeup` pattern Claude Code already uses on
+  this project — every wakeup calls `events_all(since=last_check)` and
+  reacts. The "save my night" goal is met; real-time push would just
+  reduce wake latency from ~30 min to ~seconds.
+
 ## [Unreleased] — M2-A: sea abstraction + DockerSea (2026-05-05)
 
 Provider-agnostic hosting. Adds a `Sea` abstraction (gomer / loki / vast /

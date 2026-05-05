@@ -1,0 +1,63 @@
+# Marina configuration example. Copy to ~/.lotsman/marina.toml and edit.
+#
+# Two top-level blocks: [hosts.NAME] (manual gRPC endpoints, no provisioning)
+# and [seas.NAME] (lifecycle-managed providers — Marina spawns/destroys
+# containers or VMs through them).
+
+# --------------------------------------------------------------------------
+# Manual hosts: pre-baked Lotsman endpoints Marina just connects to.
+# Use this for ssh-tunneled UDS or a long-lived container outside Marina's
+# lifecycle.
+# --------------------------------------------------------------------------
+
+# [hosts.legacy_box]
+# target = "localhost:50051"
+
+# Alias: grpc_target (same field, alternate name)
+# [hosts.uds_via_ssh]
+# grpc_target = "unix:///tmp/lotsman-w3.sock"
+
+
+# --------------------------------------------------------------------------
+# Seas: provider abstraction. Each sea owns a registered name (gomer,
+# loki, vast_main, ...) and a `type` selecting the implementation.
+# Marina dispatches host_create / host_destroy / sea_search / etc. by
+# the `sea` argument of the MCP call.
+# --------------------------------------------------------------------------
+
+# Local Docker on this machine. `docker_context = "default"` uses the
+# normal Docker Desktop / dockerd. Replace with "gomer" for a remote
+# context, "loki" for another local context, etc.
+[seas.local]
+type = "docker_sea"
+docker_context = "default"
+gpu_model = "none"
+gpu_count = 0
+vram_gb = 0
+fp64_native = false
+cpu_ghz = 4.0
+cpu_cores = 8
+ram_gb = 16
+disk_gb = 200
+# reliability defaults to 1.0 (owner-attested). Override to 0.9 if your
+# box is flaky and you want it filtered out of `dft_paper_grade`.
+# reliability = 1.0
+
+# Remote Docker on the gomer GPU box (set up via `docker context create gomer`).
+# [seas.gomer]
+# type = "docker_sea"
+# docker_context = "gomer"
+# gpu_model = "RTX 4070"
+# gpu_count = 1
+# vram_gb = 12
+# fp64_native = false       # Ada Lovelace consumer cards: no native FP64
+# cpu_ghz = 5.7
+# cpu_cores = 8
+# ram_gb = 32
+# disk_gb = 500
+
+# Vast.ai (M2-B-A, future). The `type = "vast_sea"` impl is not yet
+# shipped — placeholder kept here for documentation.
+# [seas.vast_main]
+# type = "vast_sea"
+# api_key_env = "VASTAI_API_KEY"
