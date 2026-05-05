@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import queue
 import subprocess
+import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import grpc
@@ -15,8 +17,53 @@ from lotsman.platform.logs import tail_bytes
 from lotsman.platform.runtime import resolve_bash
 from lotsman.platform.sanitize import sanitize_script
 from lotsman.v1 import lotsman_pb2, lotsman_pb2_grpc
+from lotsman.watchdogs import (
+    Check,
+    CheckResult,
+    DiskLowCheck,
+    GpuIdleCheck,
+    ProcessExitOomCheck,
+    Supervisor,
+    WatchdogContext,
+)
 
 TAIL_POLL_INTERVAL_S = 0.05
+WATCHDOG_TICK_S = 1.0
+EVENT_QUEUE_POLL_S = 0.5
+
+_STATE_NAMES: dict[int, str] = {
+    lotsman_pb2.JOB_STATE_UNSPECIFIED: "UNSPECIFIED",
+    lotsman_pb2.PENDING: "PENDING",
+    lotsman_pb2.RUNNING: "RUNNING",
+    lotsman_pb2.DONE: "DONE",
+    lotsman_pb2.FAILED: "FAILED",
+    lotsman_pb2.KILLED: "KILLED",
+    lotsman_pb2.ORPHANED: "ORPHANED",
+}
+
+
+def _default_checks_factory() -> list[Check]:
+    """Production default watchdog set baked into every job.
+
+    Light, host-portable defaults. Tool-specific watchdogs (scf_plateau,
+    cons_qty_drift, h_anchor_violation, ...) belong in manifest.toml's
+    `default_watchdogs` and arrive in M3.
+    """
+    return [DiskLowCheck(), ProcessExitOomCheck(), GpuIdleCheck()]
+
+
+class _EventSubscription:
+    """One open Events gRPC stream."""
+
+    __slots__ = ("job_filter", "queue")
+
+    def __init__(self, job_filter: str | None) -> None:
+        self.job_filter = job_filter  # None = all jobs
+        self.queue: queue.SimpleQueue[lotsman_pb2.Event] = queue.SimpleQueue()
+
+    def push(self, event: lotsman_pb2.Event) -> None:
+        if self.job_filter is None or event.job_id == self.job_filter:
+            self.queue.put(event)
 
 
 class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
@@ -25,12 +72,66 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
         host_id: str = "local",
         jobs_dir: Path | None = None,
         manifest_path: Path | None = None,
+        default_checks: list[Check] | None = None,
+        default_checks_factory: Callable[[], list[Check]] | None = None,
     ) -> None:
         self.host_id = host_id
         self.jobs_dir = jobs_dir or Path("/var/lotsman/jobs")
         self.bash_path = resolve_bash()
         self.manifest = load_manifest(manifest_path)
         self.jobs: dict[str, Job] = {}
+
+        # ---- watchdog state ----
+        if default_checks is not None:
+            self._default_checks_factory: Callable[[], list[Check]] = (
+                lambda: list(default_checks)
+            )
+        elif default_checks_factory is not None:
+            self._default_checks_factory = default_checks_factory
+        else:
+            self._default_checks_factory = _default_checks_factory
+
+        self.supervisor = Supervisor(self._build_ctx)
+        self._event_log: dict[str, list[lotsman_pb2.Event]] = {}
+        self._subs: list[_EventSubscription] = []
+        self._subs_lock = threading.Lock()
+        self.supervisor.add_listener(self._on_fire)
+        self.supervisor.start(period_sec=WATCHDOG_TICK_S)
+
+    # ----- watchdog helpers -----
+
+    def _build_ctx(self, job_id: str) -> WatchdogContext | None:
+        job = self.jobs.get(job_id)
+        if job is None:
+            return None
+        job.poll_completion()
+        return WatchdogContext(
+            job_id=job_id,
+            pid=job.proc.pid if job.proc is not None else None,
+            started_at_unix_ms=job.started_at_ms or 0,
+            last_activity_unix_ms=now_ms(),
+            state=_STATE_NAMES.get(job.state, "UNSPECIFIED"),
+            exit_code=job.exit_code,
+            job_dir=job.job_dir,
+        )
+
+    def _on_fire(self, job_id: str, result: CheckResult) -> None:
+        event = lotsman_pb2.Event(
+            job_id=job_id,
+            watchdog_name=result.name,
+            event_type="watchdog_fired",
+            unix_ms=now_ms(),
+            detail=result.detail,
+            severity=result.severity,
+            data=dict(result.data),
+        )
+        self._event_log.setdefault(job_id, []).append(event)
+        with self._subs_lock:
+            subs = list(self._subs)
+        for sub in subs:
+            sub.push(event)
+
+    # ----- job lifecycle helper -----
 
     def _running_job(self) -> Job | None:
         for job in self.jobs.values():
@@ -39,6 +140,8 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
                 if job.state == lotsman_pb2.RUNNING:
                     return job
         return None
+
+    # ----- RPCs -----
 
     def Run(
         self,
@@ -80,6 +183,7 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
             started_at_ms=now_ms(),
         )
         self.jobs[job_id] = job
+        self.supervisor.register(job_id, self._default_checks_factory())
 
         return lotsman_pb2.RunResponse(job_id=job_id, state=lotsman_pb2.RUNNING)
 
@@ -237,6 +341,77 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
             known_pitfalls=m.known_pitfalls,
         )
 
+    def Events(
+        self,
+        request: lotsman_pb2.EventsRequest,
+        context: grpc.ServicerContext,
+    ) -> Iterator[lotsman_pb2.Event]:
+        job_filter = request.job_id or None
+
+        sub = _EventSubscription(job_filter=job_filter)
+
+        # Replay history first if asked.
+        if request.since_unix_ms > 0:
+            for jid, events in self._event_log.items():
+                if job_filter is not None and jid != job_filter:
+                    continue
+                for ev in events:
+                    if ev.unix_ms >= request.since_unix_ms:
+                        sub.queue.put(ev)
+
+        with self._subs_lock:
+            self._subs.append(sub)
+        try:
+            while context.is_active():
+                try:
+                    ev = sub.queue.get(timeout=EVENT_QUEUE_POLL_S)
+                except queue.Empty:
+                    continue
+                yield ev
+        finally:
+            with self._subs_lock:
+                if sub in self._subs:
+                    self._subs.remove(sub)
+
+    def WatchdogList(
+        self,
+        request: lotsman_pb2.WatchdogListRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.WatchdogListResponse:
+        if request.job_id not in self.jobs:
+            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+
+        checks = self.supervisor.list_watchdogs(request.job_id)
+        fired = self.supervisor.fired_names(request.job_id)
+        watchdogs = [
+            lotsman_pb2.Watchdog(
+                name=c.name,
+                fired=c.name in fired,
+                action="notify",
+                interval_sec=float(c.interval_sec),
+            )
+            for c in checks
+        ]
+        return lotsman_pb2.WatchdogListResponse(
+            job_id=request.job_id, watchdogs=watchdogs
+        )
+
+    def WatchdogHistory(
+        self,
+        request: lotsman_pb2.WatchdogHistoryRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.WatchdogHistoryResponse:
+        if request.job_id not in self.jobs:
+            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+
+        events = self._event_log.get(request.job_id, [])
+        if request.since_unix_ms > 0:
+            events = [e for e in events if e.unix_ms >= request.since_unix_ms]
+        return lotsman_pb2.WatchdogHistoryResponse(
+            job_id=request.job_id, events=list(events)
+        )
+
     def shutdown(self) -> None:
+        self.supervisor.stop()
         for job in self.jobs.values():
             job.terminate()

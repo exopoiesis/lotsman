@@ -66,6 +66,21 @@ class LotsmanServiceStub(object):
                 request_serializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiRequest.SerializeToString,
                 response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiResponse.FromString,
                 _registered_method=True)
+        self.Events = channel.unary_stream(
+                '/lotsman.v1.LotsmanService/Events',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.EventsRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.Event.FromString,
+                _registered_method=True)
+        self.WatchdogList = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/WatchdogList',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogListRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogListResponse.FromString,
+                _registered_method=True)
+        self.WatchdogHistory = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/WatchdogHistory',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryResponse.FromString,
+                _registered_method=True)
 
 
 class LotsmanServiceServicer(object):
@@ -125,6 +140,33 @@ class LotsmanServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Events(self, request, context):
+        """Events is a server-streaming RPC over watchdog hits + (later) state
+        transitions. Setting `job_id` empty subscribes to all jobs on this
+        Lotsman; `since_unix_ms` replays past events from history (0 = live only).
+        The stream stays open until the client cancels.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchdogList(self, request, context):
+        """WatchdogList returns the set of watchdogs currently attached to a job
+        (defaults from manifest plus any extras passed at Run-time), with
+        their fired-once status. Returns NOT_FOUND if jobId is unknown.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchdogHistory(self, request, context):
+        """WatchdogHistory returns past fired events for a job — what crossed
+        a threshold and when. Returns NOT_FOUND if jobId is unknown.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LotsmanServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -157,6 +199,21 @@ def add_LotsmanServiceServicer_to_server(servicer, server):
                     servicer.Whoami,
                     request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiRequest.FromString,
                     response_serializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiResponse.SerializeToString,
+            ),
+            'Events': grpc.unary_stream_rpc_method_handler(
+                    servicer.Events,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.EventsRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.Event.SerializeToString,
+            ),
+            'WatchdogList': grpc.unary_unary_rpc_method_handler(
+                    servicer.WatchdogList,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogListRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogListResponse.SerializeToString,
+            ),
+            'WatchdogHistory': grpc.unary_unary_rpc_method_handler(
+                    servicer.WatchdogHistory,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -323,6 +380,87 @@ class LotsmanService(object):
             '/lotsman.v1.LotsmanService/Whoami',
             lotsman_dot_v1_dot_lotsman__pb2.WhoamiRequest.SerializeToString,
             lotsman_dot_v1_dot_lotsman__pb2.WhoamiResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Events(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Events',
+            lotsman_dot_v1_dot_lotsman__pb2.EventsRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.Event.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchdogList(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/WatchdogList',
+            lotsman_dot_v1_dot_lotsman__pb2.WatchdogListRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.WatchdogListResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchdogHistory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/WatchdogHistory',
+            lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.WatchdogHistoryResponse.FromString,
             options,
             channel_credentials,
             insecure,

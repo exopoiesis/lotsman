@@ -32,6 +32,21 @@ service LotsmanService {
   // in, defaults baked into manifest.toml, known pitfalls. Lets Marina probe
   // a freshly-spawned host without out-of-band knowledge.
   rpc Whoami(WhoamiRequest) returns (WhoamiResponse);
+
+  // Events is a server-streaming RPC over watchdog hits + (later) state
+  // transitions. Setting `job_id` empty subscribes to all jobs on this
+  // Lotsman; `since_unix_ms` replays past events from history (0 = live only).
+  // The stream stays open until the client cancels.
+  rpc Events(EventsRequest) returns (stream Event);
+
+  // WatchdogList returns the set of watchdogs currently attached to a job
+  // (defaults from manifest plus any extras passed at Run-time), with
+  // their fired-once status. Returns NOT_FOUND if jobId is unknown.
+  rpc WatchdogList(WatchdogListRequest) returns (WatchdogListResponse);
+
+  // WatchdogHistory returns past fired events for a job — what crossed
+  // a threshold and when. Returns NOT_FOUND if jobId is unknown.
+  rpc WatchdogHistory(WatchdogHistoryRequest) returns (WatchdogHistoryResponse);
 }
 
 enum JobState {
@@ -135,4 +150,57 @@ message WhoamiResponse {
   bool mpirun_required = 8;
   // Free-form pitfall reminders ("QE GPU silent crash without mpirun", ...)
   repeated string known_pitfalls = 9;
+}
+
+// ---- watchdogs / events ----
+
+message Event {
+  // Owning job; "" only used in EventsRequest, never on the wire returned
+  // from the server (each yielded Event always names its job).
+  string job_id = 1;
+  // For watchdog events: the check name ("disk_low", "gpu_idle", ...).
+  string watchdog_name = 2;
+  // Discriminator. M2-B-2 ships only "watchdog_fired"; "state_change" is
+  // reserved for when we wire job lifecycle transitions in M2-B-3.
+  string event_type = 3;
+  int64 unix_ms = 4;
+  string detail = 5;
+  // "notify" | "kill" | "checkpoint"
+  string severity = 6;
+  // Structured payload; check-specific keys (e.g. "free_gb", "exit_code").
+  map<string, string> data = 7;
+}
+
+message EventsRequest {
+  // Empty subscribes across all jobs on this Lotsman.
+  string job_id = 1;
+  // 0 = live only; otherwise replay history from this wall-time first.
+  int64 since_unix_ms = 2;
+}
+
+message Watchdog {
+  string name = 1;
+  bool fired = 2;
+  // "notify" by default; "kill" / "checkpoint" reserved for M3.
+  string action = 3;
+  double interval_sec = 4;
+}
+
+message WatchdogListRequest {
+  string job_id = 1;
+}
+
+message WatchdogListResponse {
+  string job_id = 1;
+  repeated Watchdog watchdogs = 2;
+}
+
+message WatchdogHistoryRequest {
+  string job_id = 1;
+  int64 since_unix_ms = 2;
+}
+
+message WatchdogHistoryResponse {
+  string job_id = 1;
+  repeated Event events = 2;
 }
