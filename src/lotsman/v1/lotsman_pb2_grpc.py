@@ -61,6 +61,11 @@ class LotsmanServiceStub(object):
                 request_serializer=lotsman_dot_v1_dot_lotsman__pb2.TailFollowRequest.SerializeToString,
                 response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.LogChunk.FromString,
                 _registered_method=True)
+        self.Whoami = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Whoami',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiResponse.FromString,
+                _registered_method=True)
 
 
 class LotsmanServiceServicer(object):
@@ -111,6 +116,15 @@ class LotsmanServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Whoami(self, request, context):
+        """Whoami returns the daemon's self-description: which tool image it lives
+        in, defaults baked into manifest.toml, known pitfalls. Lets Marina probe
+        a freshly-spawned host without out-of-band knowledge.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LotsmanServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -138,6 +152,11 @@ def add_LotsmanServiceServicer_to_server(servicer, server):
                     servicer.TailFollow,
                     request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.TailFollowRequest.FromString,
                     response_serializer=lotsman_dot_v1_dot_lotsman__pb2.LogChunk.SerializeToString,
+            ),
+            'Whoami': grpc.unary_unary_rpc_method_handler(
+                    servicer.Whoami,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.WhoamiResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -277,6 +296,33 @@ class LotsmanService(object):
             '/lotsman.v1.LotsmanService/TailFollow',
             lotsman_dot_v1_dot_lotsman__pb2.TailFollowRequest.SerializeToString,
             lotsman_dot_v1_dot_lotsman__pb2.LogChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Whoami(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Whoami',
+            lotsman_dot_v1_dot_lotsman__pb2.WhoamiRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.WhoamiResponse.FromString,
             options,
             channel_credentials,
             insecure,

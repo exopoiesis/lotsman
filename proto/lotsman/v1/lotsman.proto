@@ -27,6 +27,11 @@ service LotsmanService {
   // ending with a chunk where job_terminal=true once the job exits.
   // Server-streaming RPC.
   rpc TailFollow(TailFollowRequest) returns (stream LogChunk);
+
+  // Whoami returns the daemon's self-description: which tool image it lives
+  // in, defaults baked into manifest.toml, known pitfalls. Lets Marina probe
+  // a freshly-spawned host without out-of-band knowledge.
+  rpc Whoami(WhoamiRequest) returns (WhoamiResponse);
 }
 
 enum JobState {
@@ -113,4 +118,21 @@ message LogChunk {
   // True iff the job has reached a terminal state (DONE/FAILED/KILLED)
   bool job_terminal = 5;
   JobState state = 6;
+}
+
+message WhoamiRequest {}
+
+message WhoamiResponse {
+  string lotsman_version = 1;
+  // Identity from manifest.toml
+  string tool = 2;             // "qe", "cp2k", ... ("" if no manifest)
+  string tool_version = 3;
+  string image = 4;            // e.g. "infra-qe-gpu"
+  string image_tag = 5;        // e.g. "server"
+  // Defaults baked into manifest
+  uint32 default_omp = 6;
+  uint32 default_npool = 7;
+  bool mpirun_required = 8;
+  // Free-form pitfall reminders ("QE GPU silent crash without mpirun", ...)
+  repeated string known_pitfalls = 9;
 }

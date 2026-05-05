@@ -8,7 +8,9 @@ from pathlib import Path
 import grpc
 from ulid import ULID
 
+from lotsman import __version__ as LOTSMAN_VERSION
 from lotsman.jobs import TERMINAL_STATES, Job, now_ms
+from lotsman.manifest import load_manifest
 from lotsman.platform.logs import tail_bytes
 from lotsman.platform.runtime import resolve_bash
 from lotsman.platform.sanitize import sanitize_script
@@ -18,10 +20,16 @@ TAIL_POLL_INTERVAL_S = 0.05
 
 
 class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
-    def __init__(self, host_id: str = "local", jobs_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        host_id: str = "local",
+        jobs_dir: Path | None = None,
+        manifest_path: Path | None = None,
+    ) -> None:
         self.host_id = host_id
         self.jobs_dir = jobs_dir or Path("/var/lotsman/jobs")
         self.bash_path = resolve_bash()
+        self.manifest = load_manifest(manifest_path)
         self.jobs: dict[str, Job] = {}
 
     def _running_job(self) -> Job | None:
@@ -210,6 +218,24 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
                 return
 
             time.sleep(TAIL_POLL_INTERVAL_S)
+
+    def Whoami(
+        self,
+        request: lotsman_pb2.WhoamiRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.WhoamiResponse:
+        m = self.manifest
+        return lotsman_pb2.WhoamiResponse(
+            lotsman_version=LOTSMAN_VERSION,
+            tool=m.tool,
+            tool_version=m.tool_version,
+            image=m.image,
+            image_tag=m.image_tag,
+            default_omp=m.default_omp,
+            default_npool=m.default_npool,
+            mpirun_required=m.mpirun_required,
+            known_pitfalls=m.known_pitfalls,
+        )
 
     def shutdown(self) -> None:
         for job in self.jobs.values():
