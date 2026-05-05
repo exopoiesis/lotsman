@@ -56,6 +56,11 @@ class LotsmanServiceStub(object):
                 request_serializer=lotsman_dot_v1_dot_lotsman__pb2.LogsRequest.SerializeToString,
                 response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.LogsResponse.FromString,
                 _registered_method=True)
+        self.TailFollow = channel.unary_stream(
+                '/lotsman.v1.LotsmanService/TailFollow',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.TailFollowRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.LogChunk.FromString,
+                _registered_method=True)
 
 
 class LotsmanServiceServicer(object):
@@ -90,8 +95,17 @@ class LotsmanServiceServicer(object):
 
     def Logs(self, request, context):
         """Logs returns a snapshot of stdout/stderr for a job.
-        Use TailFollow for live streaming (added later).
+        Use TailFollow for live streaming.
         Returns NOT_FOUND if jobId is unknown.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TailFollow(self, request, context):
+        """TailFollow streams new stdout/stderr bytes as the job produces them,
+        ending with a chunk where job_terminal=true once the job exits.
+        Server-streaming RPC.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -119,6 +133,11 @@ def add_LotsmanServiceServicer_to_server(servicer, server):
                     servicer.Logs,
                     request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.LogsRequest.FromString,
                     response_serializer=lotsman_dot_v1_dot_lotsman__pb2.LogsResponse.SerializeToString,
+            ),
+            'TailFollow': grpc.unary_stream_rpc_method_handler(
+                    servicer.TailFollow,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.TailFollowRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.LogChunk.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -231,6 +250,33 @@ class LotsmanService(object):
             '/lotsman.v1.LotsmanService/Logs',
             lotsman_dot_v1_dot_lotsman__pb2.LogsRequest.SerializeToString,
             lotsman_dot_v1_dot_lotsman__pb2.LogsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TailFollow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/TailFollow',
+            lotsman_dot_v1_dot_lotsman__pb2.TailFollowRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.LogChunk.FromString,
             options,
             channel_credentials,
             insecure,

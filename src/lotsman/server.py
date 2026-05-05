@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import grpc
@@ -11,6 +13,8 @@ from lotsman.platform.logs import tail_bytes
 from lotsman.platform.runtime import resolve_bash
 from lotsman.platform.sanitize import sanitize_script
 from lotsman.v1 import lotsman_pb2, lotsman_pb2_grpc
+
+TAIL_POLL_INTERVAL_S = 0.05
 
 
 class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
@@ -150,6 +154,62 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
             stdout_total_bytes=stdout_total,
             stderr_total_bytes=stderr_total,
         )
+
+    def TailFollow(
+        self,
+        request: lotsman_pb2.TailFollowRequest,
+        context: grpc.ServicerContext,
+    ) -> Iterator[lotsman_pb2.LogChunk]:
+        job = self.jobs.get(request.job_id)
+        if job is None:
+            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+
+        stdout_path = job.job_dir / "stdout.log"
+        stderr_path = job.job_dir / "stderr.log"
+        stdout_off = (
+            request.from_offset_stdout if request.HasField("from_offset_stdout") else 0
+        )
+        stderr_off = (
+            request.from_offset_stderr if request.HasField("from_offset_stderr") else 0
+        )
+
+        while context.is_active():
+            new_stdout = b""
+            new_stderr = b""
+
+            if stdout_path.exists():
+                size = stdout_path.stat().st_size
+                if size > stdout_off:
+                    with stdout_path.open("rb") as f:
+                        f.seek(stdout_off)
+                        new_stdout = f.read()
+                    stdout_off = size
+
+            if request.include_stderr and stderr_path.exists():
+                size = stderr_path.stat().st_size
+                if size > stderr_off:
+                    with stderr_path.open("rb") as f:
+                        f.seek(stderr_off)
+                        new_stderr = f.read()
+                    stderr_off = size
+
+            job.poll_completion()
+            is_terminal = job.state in TERMINAL_STATES
+
+            if new_stdout or new_stderr or is_terminal:
+                yield lotsman_pb2.LogChunk(
+                    stdout=new_stdout,
+                    stderr=new_stderr,
+                    stdout_offset_after=stdout_off,
+                    stderr_offset_after=stderr_off,
+                    job_terminal=is_terminal,
+                    state=job.state,
+                )
+
+            if is_terminal:
+                return
+
+            time.sleep(TAIL_POLL_INTERVAL_S)
 
     def shutdown(self) -> None:
         for job in self.jobs.values():

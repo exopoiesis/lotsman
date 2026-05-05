@@ -19,9 +19,14 @@ service LotsmanService {
   rpc Kill(KillRequest) returns (KillResponse);
 
   // Logs returns a snapshot of stdout/stderr for a job.
-  // Use TailFollow for live streaming (added later).
+  // Use TailFollow for live streaming.
   // Returns NOT_FOUND if jobId is unknown.
   rpc Logs(LogsRequest) returns (LogsResponse);
+
+  // TailFollow streams new stdout/stderr bytes as the job produces them,
+  // ending with a chunk where job_terminal=true once the job exits.
+  // Server-streaming RPC.
+  rpc TailFollow(TailFollowRequest) returns (stream LogChunk);
 }
 
 enum JobState {
@@ -89,4 +94,23 @@ message LogsResponse {
   // (so caller can detect "more was added since")
   uint64 stdout_total_bytes = 4;
   uint64 stderr_total_bytes = 5;
+}
+
+message TailFollowRequest {
+  string job_id = 1;
+  bool include_stderr = 2;
+  // Resume streaming from these byte offsets (for client reconnect)
+  optional uint64 from_offset_stdout = 3;
+  optional uint64 from_offset_stderr = 4;
+}
+
+message LogChunk {
+  bytes stdout = 1;
+  bytes stderr = 2;
+  // Byte offset after this chunk's contents (caller can resume from here)
+  uint64 stdout_offset_after = 3;
+  uint64 stderr_offset_after = 4;
+  // True iff the job has reached a terminal state (DONE/FAILED/KILLED)
+  bool job_terminal = 5;
+  JobState state = 6;
 }
