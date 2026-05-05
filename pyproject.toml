@@ -23,6 +23,10 @@ dev = [
   "mypy>=1.10",
 ]
 
+[project.scripts]
+lotsman = "lotsman.__main__:main"
+marina = "marina.__main__:main"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
