@@ -5,12 +5,13 @@ description = "In-container daemon for compute tools (DFT, AIMD, MD on ephemeral
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Igor Morozov", email = "igor@exopoiesis.space" }]
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "grpcio>=1.65",
   "protobuf>=4.25",
   "python-ulid>=2.0",
   "mcp>=1.0",
+  "tomli>=2.0; python_version<'3.11'",
 ]
 
 [project.optional-dependencies]

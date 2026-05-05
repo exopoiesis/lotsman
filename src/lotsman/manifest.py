@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-import tomllib
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ImportError:  # pragma: no cover — 3.10 fallback for older base images
+    import tomli as tomllib  # type: ignore[no-redef]
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
