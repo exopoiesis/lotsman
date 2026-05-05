@@ -140,8 +140,16 @@ def test_create_dispatches_docker_run_with_context_and_gpus() -> None:
     # has both labels
     assert "lotsman_managed=1" in run_call.argv
     assert "lotsman_sea=gomer" in run_call.argv
-    # exec lotsman serve at end
-    assert run_call.argv[-3:] == ["exopoiesis/lotsman:latest", "lotsman", "serve"]
+    # threads host name into the container as ENV (lotsman_pb2-side)
+    assert "LOTSMAN_HOST_ID=gomer-1" in run_call.argv
+    # exec lotsman serve at end with --host-id so jobIds match Marina's name
+    assert run_call.argv[-5:] == [
+        "exopoiesis/lotsman:latest",
+        "lotsman",
+        "serve",
+        "--host-id",
+        "gomer-1",
+    ]
 
 
 def test_create_no_gpu_flag_when_capability_has_no_gpu() -> None:

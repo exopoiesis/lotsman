@@ -189,12 +189,16 @@ class DockerSea:
             _LOTSMAN_LABEL,
             "--label",
             f"lotsman_sea={self.name}",
+            "-e",
+            f"LOTSMAN_HOST_ID={host_name}",
             "-p",
             f"0:{_LOTSMAN_CONTAINER_PORT}",
         ]
         if self.capability.gpu_count > 0:
             argv += ["--gpus", "all"]
-        argv += [image, "lotsman", "serve"]
+        # Pass --host-id explicitly so Lotsman's job_id prefix matches the
+        # name Marina uses in its registry. Otherwise routing breaks.
+        argv += [image, "lotsman", "serve", "--host-id", host_name]
 
         result = self._runner(argv)
         if not result.ok:
