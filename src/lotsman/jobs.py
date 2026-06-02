@@ -4,7 +4,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from lotsman.v1 import lotsman_pb2
 
@@ -20,7 +20,7 @@ class Job:
     job_id: str
     state: int  # lotsman_pb2.JobState value
     job_dir: Path
-    proc: subprocess.Popen | None = None
+    proc: subprocess.Popen[Any] | None = None
     stdout_handle: IO[bytes] | None = None
     stderr_handle: IO[bytes] | None = None
     started_at_ms: int | None = None

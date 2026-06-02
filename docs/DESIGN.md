@@ -297,13 +297,13 @@ Modes:
 
 | Команда | Параметры | Заметка |
 |---|---|---|
-| `upload` | `path`, `content_b64\|text`, `mode?`, `executable?` | авто CRLF→LF + em-dash; ASCII guard если контейнер ASCII-only |
-| `ls` | `path`, `glob?`, `recursive?=false` | |
-| `stat` | `path` | size, mtime, sha256 |
-| `cat` | `path`, `head?`, `tail?` | для коротких текстов |
-| `mkdir` | `path` | |
-| `rm` | `path`, `safe?=true` | через `safe_rm` по умолчанию (fuser check + .trash); unsafe требует `force=true` + override-флаг |
-| `disk_free` | `path?` | df + top-N largest dirs |
+| `upload` | `host`, `path`, `content\|content_b64`, `create_parents?=true`, `overwrite?=false`, `executable?=false` | DONE 2026-06-02. Основной путь staging для скриптов и input-файлов. gRPC возвращает `bytes_written` + `sha256`; MCP принимает text или base64 |
+| `mkdir` | `host`, `path`, `parents?=true`, `exist_ok?=true` | DONE 2026-06-02 |
+| `ls` | `host`, `path` | DONE 2026-06-02. Возвращает `name/path/is_dir/size_bytes/mtime_unix_ms`; `glob` и recursive — позже |
+| `stat` | `host`, `path` | DONE 2026-06-02. Возвращает exists/is_dir/size/mtime; `sha256` — позже |
+| `cat` | `host`, `path`, `max_bytes?` | DONE 2026-06-02. Для коротких текстов; MCP возвращает и UTF-8 text, и base64 |
+| `disk_free` | `host`, `path?` | DONE 2026-06-02. Возвращает total/used/free bytes; top-N largest dirs — позже |
+| `rm` | `path`, `safe?=true` | DEFERRED. Только через safe-rm policy (`safe_rm` / .trash / fuser gate); unsafe требует отдельного решения |
 
 ### System / self-knowledge
 
@@ -471,6 +471,7 @@ impossible-to-skip.
 - **M1** — **Lotsman + Marina baseline DONE 2026-05-05.** 6 RPCs (Run, Status, Kill, Logs, TailFollow, Whoami), 66 tests passing in <6s, two daemon CLI entry points, Dockerfile validated end-to-end on remote Linux Docker (gomer). KISS scope: single-job-per-Lotsman, TCP gRPC (UDS+SSH deferred), in-memory state. Three M1-marked but deferred items: per-tool image layering (`infra-qe-gpu` + Lotsman), SSH-tunneled UDS transport, harvest streaming RPC.
 - **M2-A — sea abstraction + DockerSea DONE 2026-05-05.** Provider-agnostic `Sea` Protocol (search/recommend/create/destroy/stop/start/cost_summary/status), `DockerSea` impl over `docker --context <ctx>` (gomer/loki/local). Workload presets `dft_paper_grade / dft_smoke / mlip / aimd_long` encoding project DEADLY_MISTAKES (FP64 only, GHz≥5.0, reliability≥0.95). Marina config `[seas.NAME]` sections + factory dispatch. MCP API: `sea_list / sea_search / sea_recommend / sea_status / cost_summary` + `host_create / host_add / host_destroy / host_stop / host_start / host_list`. Bumps total tests 66→146, all green in 6s. Provisioning testable on free local docker — no Vast.ai burn.
 - **M2-B — watchdog system + events fan-out DONE 2026-05-05.** Per-Lotsman `Supervisor` with three production checks (`DiskLowCheck`, `ProcessExitOomCheck`, `GpuIdleCheck`); fires at most once per check, idempotent. New gRPC RPCs `Events` (server-stream), `WatchdogList`, `WatchdogHistory`, `EventsHistoryAll`. Marina-side `Hub.events_all` fan-out across hosts. MCP tools `watchdog_list / watchdog_history / events / events_all`. Sea Protocol gains `env: dict[str, str]` on `create()` so admin can tune watchdog thresholds per-host (`LOTSMAN_DISK_LOW_GB`, `LOTSMAN_GPU_IDLE_*`). L3 smoke: `disk_low` forced fire on a real Docker container observed via Marina end-to-end. 195 tests total, ~84 s wall. **Tier 1 polling** is the delivered transport — sufficient for the `/loop`+`ScheduleWakeup` pattern Claude Code uses today.
+- **M2-Files — filesystem staging API DONE 2026-06-02.** First command layer for uploading scripts/inputs to host disk without shell quoting: gRPC `Upload / Mkdir / Ls / Stat / Cat / DiskFree`, Marina Hub proxies, MCP tools `upload / mkdir / ls / stat / cat / disk_free`. `upload` supports UTF-8 text or base64 payloads, parent creation, overwrite guard, executable bit, and sha256 response. `rm` intentionally deferred until safe-rm policy is implemented. Windows local dev hardening: `resolve_bash()` now prefers Git Bash over the WSL shim. Typed protobuf `.pyi` facades added so `mypy src tests` is green. 204 tests total; ruff, mypy, pytest clean.
 - **M2-B-Tier2 (deferred — upstream blocker).** Native MCP Tasks API: `mcp` Python SDK 1.26.0 ships Task *types* but neither `FastMCP` nor lowlevel `Server` surfaces task **handlers**. Revisit when SDK exposes them.
 - **M2-C — `claude/channel` push prototype (deferred — upstream blocker).** Undocumented in standard MCP; Claude Code-specific capability mentioned in this design doc with explicit caveat. Standard `LoggingMessageNotification` flows only within active sessions, doesn't wake a sleeping agent. In the meantime, Tier 1 polling already meets the "save my night" goal — real-time push would just reduce wake latency from ~30 min to seconds.
 - **M2-A-Vast — `VastSea` (deferred per project decision).** "Сначала всё через гомер" — until owned-hardware flow is fully proven, no Vast.ai burn.

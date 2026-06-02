@@ -86,6 +86,36 @@ class LotsmanServiceStub(object):
                 request_serializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllRequest.SerializeToString,
                 response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllResponse.FromString,
                 _registered_method=True)
+        self.Upload = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Upload',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.UploadRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.UploadResponse.FromString,
+                _registered_method=True)
+        self.Mkdir = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Mkdir',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.MkdirRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.MkdirResponse.FromString,
+                _registered_method=True)
+        self.Ls = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Ls',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.LsRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.LsResponse.FromString,
+                _registered_method=True)
+        self.Stat = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Stat',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.StatRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.StatResponse.FromString,
+                _registered_method=True)
+        self.Cat = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Cat',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.CatRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.CatResponse.FromString,
+                _registered_method=True)
+        self.DiskFree = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/DiskFree',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeResponse.FromString,
+                _registered_method=True)
 
 
 class LotsmanServiceServicer(object):
@@ -181,6 +211,49 @@ class LotsmanServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Upload(self, request, context):
+        """Upload writes bytes to disk in the compute container. This is the primary
+        path for staging scripts, QE/CP2K/ABACUS inputs, and small helper files.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Mkdir(self, request, context):
+        """Mkdir creates a directory on disk.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Ls(self, request, context):
+        """Ls lists a directory.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Stat(self, request, context):
+        """Stat returns file metadata.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Cat(self, request, context):
+        """Cat reads a file snapshot.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DiskFree(self, request, context):
+        """DiskFree returns free/used bytes for a filesystem path.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LotsmanServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -233,6 +306,36 @@ def add_LotsmanServiceServicer_to_server(servicer, server):
                     servicer.EventsHistoryAll,
                     request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllRequest.FromString,
                     response_serializer=lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllResponse.SerializeToString,
+            ),
+            'Upload': grpc.unary_unary_rpc_method_handler(
+                    servicer.Upload,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.UploadRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.UploadResponse.SerializeToString,
+            ),
+            'Mkdir': grpc.unary_unary_rpc_method_handler(
+                    servicer.Mkdir,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.MkdirRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.MkdirResponse.SerializeToString,
+            ),
+            'Ls': grpc.unary_unary_rpc_method_handler(
+                    servicer.Ls,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.LsRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.LsResponse.SerializeToString,
+            ),
+            'Stat': grpc.unary_unary_rpc_method_handler(
+                    servicer.Stat,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.StatRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.StatResponse.SerializeToString,
+            ),
+            'Cat': grpc.unary_unary_rpc_method_handler(
+                    servicer.Cat,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.CatRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.CatResponse.SerializeToString,
+            ),
+            'DiskFree': grpc.unary_unary_rpc_method_handler(
+                    servicer.DiskFree,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -507,6 +610,168 @@ class LotsmanService(object):
             '/lotsman.v1.LotsmanService/EventsHistoryAll',
             lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllRequest.SerializeToString,
             lotsman_dot_v1_dot_lotsman__pb2.EventsHistoryAllResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Upload(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Upload',
+            lotsman_dot_v1_dot_lotsman__pb2.UploadRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.UploadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Mkdir(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Mkdir',
+            lotsman_dot_v1_dot_lotsman__pb2.MkdirRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.MkdirResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Ls(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Ls',
+            lotsman_dot_v1_dot_lotsman__pb2.LsRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.LsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Stat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Stat',
+            lotsman_dot_v1_dot_lotsman__pb2.StatRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.StatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Cat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Cat',
+            lotsman_dot_v1_dot_lotsman__pb2.CatRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.CatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DiskFree(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/DiskFree',
+            lotsman_dot_v1_dot_lotsman__pb2.DiskFreeRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.DiskFreeResponse.FromString,
             options,
             channel_credentials,
             insecure,

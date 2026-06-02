@@ -244,6 +244,57 @@ class Hub:
     def whoami(self, host: str) -> lotsman_pb2.WhoamiResponse:
         return self._stub_for(host).Whoami(lotsman_pb2.WhoamiRequest())
 
+    # ---- filesystem ----
+
+    def upload(
+        self,
+        host: str,
+        path: str,
+        content: bytes,
+        *,
+        create_parents: bool = False,
+        overwrite: bool = False,
+        executable: bool = False,
+    ) -> lotsman_pb2.UploadResponse:
+        return self._stub_for(host).Upload(
+            lotsman_pb2.UploadRequest(
+                path=path,
+                content=content,
+                create_parents=create_parents,
+                overwrite=overwrite,
+                executable=executable,
+            )
+        )
+
+    def mkdir(
+        self,
+        host: str,
+        path: str,
+        *,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> lotsman_pb2.MkdirResponse:
+        return self._stub_for(host).Mkdir(
+            lotsman_pb2.MkdirRequest(path=path, parents=parents, exist_ok=exist_ok)
+        )
+
+    def ls(self, host: str, path: str) -> lotsman_pb2.LsResponse:
+        return self._stub_for(host).Ls(lotsman_pb2.LsRequest(path=path))
+
+    def stat(self, host: str, path: str) -> lotsman_pb2.StatResponse:
+        return self._stub_for(host).Stat(lotsman_pb2.StatRequest(path=path))
+
+    def cat(
+        self, host: str, path: str, max_bytes: int | None = None
+    ) -> lotsman_pb2.CatResponse:
+        req = lotsman_pb2.CatRequest(path=path)
+        if max_bytes is not None:
+            req.max_bytes = max_bytes
+        return self._stub_for(host).Cat(req)
+
+    def disk_free(self, host: str, path: str) -> lotsman_pb2.DiskFreeResponse:
+        return self._stub_for(host).DiskFree(lotsman_pb2.DiskFreeRequest(path=path))
+
     # ---- watchdogs / events ----
 
     def watchdog_list(

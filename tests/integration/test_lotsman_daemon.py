@@ -6,6 +6,7 @@ import sys
 import time
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import grpc
 import pytest
@@ -21,7 +22,7 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_ready(proc: subprocess.Popen, timeout_s: float = 5.0) -> bool:
+def _wait_ready(proc: subprocess.Popen[Any], timeout_s: float = 5.0) -> bool:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if proc.poll() is not None:

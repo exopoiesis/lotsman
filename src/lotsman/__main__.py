@@ -12,10 +12,10 @@ import grpc
 
 from lotsman.server import LotsmanService
 from lotsman.v1 import lotsman_pb2_grpc
-from lotsman.watchdogs import DiskLowCheck, GpuIdleCheck, ProcessExitOomCheck
+from lotsman.watchdogs import Check, DiskLowCheck, GpuIdleCheck, ProcessExitOomCheck
 
 
-def _watchdog_defaults_from_env() -> list:
+def _watchdog_defaults_from_env() -> list[Check]:
     """Build the production default watchdog set, with env-var overrides.
 
     Env vars:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import queue
+import shutil
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import NoReturn
 
 import grpc
 from ulid import ULID
@@ -40,6 +43,28 @@ _STATE_NAMES: dict[int, str] = {
     lotsman_pb2.KILLED: "KILLED",
     lotsman_pb2.ORPHANED: "ORPHANED",
 }
+
+
+def _mtime_ms(path: Path) -> int:
+    return int(path.stat().st_mtime * 1000)
+
+
+def _entry_for(path: Path) -> lotsman_pb2.DirEntry:
+    st = path.stat()
+    return lotsman_pb2.DirEntry(
+        name=path.name,
+        path=str(path),
+        is_dir=path.is_dir(),
+        size_bytes=0 if path.is_dir() else st.st_size,
+        mtime_unix_ms=int(st.st_mtime * 1000),
+    )
+
+
+def _abort(
+    context: grpc.ServicerContext, code: grpc.StatusCode, message: str
+) -> NoReturn:
+    context.abort(code, message)
+    raise RuntimeError(message)
 
 
 def _default_checks_factory() -> list[Check]:
@@ -194,7 +219,7 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
     ) -> lotsman_pb2.StatusResponse:
         job = self.jobs.get(request.job_id)
         if job is None:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+            _abort(context, grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
 
         job.poll_completion()
 
@@ -214,7 +239,7 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
     ) -> lotsman_pb2.KillResponse:
         job = self.jobs.get(request.job_id)
         if job is None:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+            _abort(context, grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
 
         grace_s = request.grace_sec if request.HasField("grace_sec") else 10.0
         force = request.force if request.HasField("force") else False
@@ -240,7 +265,7 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
     ) -> lotsman_pb2.LogsResponse:
         job = self.jobs.get(request.job_id)
         if job is None:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+            _abort(context, grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
 
         stdout_path = job.job_dir / "stdout.log"
         stderr_path = job.job_dir / "stderr.log"
@@ -274,7 +299,7 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
     ) -> Iterator[lotsman_pb2.LogChunk]:
         job = self.jobs.get(request.job_id)
         if job is None:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
+            _abort(context, grpc.StatusCode.NOT_FOUND, f"unknown job {request.job_id!r}")
 
         stdout_path = job.job_dir / "stdout.log"
         stderr_path = job.job_dir / "stderr.log"
@@ -425,6 +450,130 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
                 all_events.append(ev)
         all_events.sort(key=lambda e: e.unix_ms)
         return lotsman_pb2.EventsHistoryAllResponse(events=all_events)
+
+    def Upload(
+        self,
+        request: lotsman_pb2.UploadRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.UploadResponse:
+        path = Path(request.path)
+        if not request.path:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "path is required")
+        if path.exists() and not request.overwrite:
+            context.abort(grpc.StatusCode.ALREADY_EXISTS, f"path exists: {request.path!r}")
+        if request.create_parents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        elif not path.parent.exists():
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"parent directory does not exist: {str(path.parent)!r}",
+            )
+
+        path.write_bytes(request.content)
+        if request.executable:
+            path.chmod(path.stat().st_mode | 0o111)
+        return lotsman_pb2.UploadResponse(
+            path=str(path),
+            bytes_written=len(request.content),
+            sha256=hashlib.sha256(request.content).hexdigest(),
+        )
+
+    def Mkdir(
+        self,
+        request: lotsman_pb2.MkdirRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.MkdirResponse:
+        path = Path(request.path)
+        if not request.path:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "path is required")
+        try:
+            path.mkdir(parents=request.parents, exist_ok=request.exist_ok)
+        except FileExistsError:
+            context.abort(grpc.StatusCode.ALREADY_EXISTS, f"path exists: {request.path!r}")
+        except FileNotFoundError:
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"parent directory does not exist: {str(path.parent)!r}",
+            )
+        return lotsman_pb2.MkdirResponse(path=str(path))
+
+    def Ls(
+        self,
+        request: lotsman_pb2.LsRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.LsResponse:
+        path = Path(request.path)
+        if not path.exists():
+            context.abort(grpc.StatusCode.NOT_FOUND, f"path not found: {request.path!r}")
+        if not path.is_dir():
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"path is not a directory: {request.path!r}",
+            )
+        entries = [_entry_for(p) for p in sorted(path.iterdir(), key=lambda p: p.name)]
+        return lotsman_pb2.LsResponse(path=str(path), entries=entries)
+
+    def Stat(
+        self,
+        request: lotsman_pb2.StatRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.StatResponse:
+        path = Path(request.path)
+        if not path.exists():
+            return lotsman_pb2.StatResponse(path=str(path), exists=False)
+        st = path.stat()
+        return lotsman_pb2.StatResponse(
+            path=str(path),
+            exists=True,
+            is_dir=path.is_dir(),
+            size_bytes=0 if path.is_dir() else st.st_size,
+            mtime_unix_ms=_mtime_ms(path),
+        )
+
+    def Cat(
+        self,
+        request: lotsman_pb2.CatRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.CatResponse:
+        path = Path(request.path)
+        if not path.exists():
+            context.abort(grpc.StatusCode.NOT_FOUND, f"path not found: {request.path!r}")
+        if path.is_dir():
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"path is a directory: {request.path!r}",
+            )
+        total = path.stat().st_size
+        if request.HasField("max_bytes") and request.max_bytes < total:
+            with path.open("rb") as f:
+                content = f.read(request.max_bytes)
+            truncated = True
+        else:
+            content = path.read_bytes()
+            truncated = False
+        return lotsman_pb2.CatResponse(
+            path=str(path),
+            content=content,
+            total_bytes=total,
+            truncated=truncated,
+        )
+
+    def DiskFree(
+        self,
+        request: lotsman_pb2.DiskFreeRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.DiskFreeResponse:
+        path = Path(request.path or ".")
+        target = path if path.exists() else path.parent
+        if not target.exists():
+            context.abort(grpc.StatusCode.NOT_FOUND, f"path not found: {request.path!r}")
+        usage = shutil.disk_usage(target)
+        return lotsman_pb2.DiskFreeResponse(
+            path=str(path),
+            total_bytes=usage.total,
+            used_bytes=usage.used,
+            free_bytes=usage.free,
+        )
 
     def shutdown(self) -> None:
         self.supervisor.stop()

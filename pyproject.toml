@@ -47,7 +47,20 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+ignore_missing_imports = true
 exclude = ["src/lotsman/v1/.*"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+allow_untyped_defs = true
+allow_untyped_calls = true
+disable_error_code = [
+  "attr-defined",
+  "comparison-overlap",
+  "no-any-return",
+  "no-untyped-def",
+  "unused-ignore",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

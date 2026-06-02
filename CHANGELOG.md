@@ -4,6 +4,45 @@ All notable changes to Lotsman are documented here. Format is loosely based on
 [Keep a Changelog](https://keepachangelog.com/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — filesystem staging API (2026-06-02)
+
+First vertical slice of the file-command layer: staging scripts and input
+files onto a compute host through Marina, then verifying them without quoting
+through SSH/docker shell layers.
+
+### Added
+
+- **gRPC filesystem RPCs**: `Upload`, `Mkdir`, `Ls`, `Stat`, `Cat`,
+  `DiskFree`.
+- **Marina Hub proxy methods** for the same operations.
+- **MCP tools**: `upload`, `mkdir`, `ls`, `stat`, `cat`, `disk_free`.
+  `upload` accepts either UTF-8 `content` or `content_b64` and can create
+  parents, refuse overwrite by default, and mark scripts executable.
+- **Tests**:
+  - service-level upload/cat/stat/ls roundtrip, overwrite guard,
+    executable flag, mkdir, disk_free, and missing-file NOT_FOUND;
+  - Marina Hub filesystem proxy tests;
+  - MCP tool registry expanded for filesystem commands.
+
+### Fixed
+
+- Windows `resolve_bash()` now prefers Git Bash and rejects the WSL shim
+  (`C:\Windows\System32\bash.exe`) when it would fail to find `/bin/bash`.
+  This restores local Windows service/integration tests for `run()` jobs.
+- `mypy src tests` is now green:
+  - added typed `.pyi` facades for generated `lotsman_pb2` /
+    `lotsman_pb2_grpc` runtime modules;
+  - kept strict checking for `src` while relaxing pytest fixture/test
+    annotation requirements;
+  - made gRPC abort control-flow explicit through a `NoReturn` helper;
+  - added missing concrete type arguments for `subprocess.Popen`.
+
+### Tested
+
+- `ruff check .`
+- `mypy src tests`
+- `pytest -q` → 204 passed
+
 ## [Unreleased] — M2-B: watchdog system + events fan-out (2026-05-05)
 
 Watchdog framework, three default checks, gRPC RPCs for events, Marina

@@ -4,9 +4,9 @@
 > the local hazards — MSYS path traps, em-dash crashes, mpirun silent-fails,
 > SIGTERM-10s drills, ENVIRON bulk rejection, ASE quirks, and the rest.
 
-**Status:** M1 baseline complete (2026-05-05). 6 RPCs, 66 tests, two daemon CLIs,
-Dockerfile validated on remote Linux Docker. See [`CHANGELOG.md`](CHANGELOG.md)
-and [`docs/DESIGN.md`](docs/DESIGN.md).
+**Status:** M2 filesystem staging complete (2026-06-02). 16 gRPC RPCs,
+204 tests, two daemon CLIs, Dockerfile validated on remote Linux Docker.
+See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Quick start
 
@@ -22,7 +22,7 @@ pip install -e .[dev]
 python -m grpc_tools.protoc -I proto --python_out=src --grpc_python_out=src \
     proto/lotsman/v1/lotsman.proto
 
-# Run tests (66, ~6s)
+# Run tests (204)
 pytest
 
 # Run a Lotsman daemon (in a container or locally for testing)
@@ -145,7 +145,7 @@ than one container.
 | Lifecycle | `run`, `status`, `wait`, `kill`, `restart`, `list_jobs` |
 | Logs | `logs`, `tail_follow`, `progress` (tool-aware), `events` |
 | Harvest | `harvest_inventory`, `harvest`, `download`, `download_glob` |
-| Filesystem | `upload`, `ls`, `stat`, `cat`, `mkdir`, `rm`, `disk_free` |
+| Filesystem | `upload`, `ls`, `stat`, `cat`, `mkdir`, `disk_free` (`rm` deferred until safe-rm policy) |
 | Self-knowledge | `whoami`, `health`, `bench_quick`, `gpu_status`, `processes`, `help`, `examples` |
 | Watchdogs | `watchdog_list`, `watchdog_history`, `watchdog_add`, `watchdog_remove` |
 | Tool-specific | `prepare_input`, `validate_input`, `pseudopotentials`, `lessons_for` |

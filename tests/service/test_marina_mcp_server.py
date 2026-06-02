@@ -27,6 +27,13 @@ EXPECTED_TOOLS = {
     "kill",
     "logs",
     "whoami",
+    # filesystem
+    "upload",
+    "mkdir",
+    "ls",
+    "stat",
+    "cat",
+    "disk_free",
     # watchdogs / events
     "watchdog_list",
     "watchdog_history",

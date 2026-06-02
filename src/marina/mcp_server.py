@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict
 from typing import Any
 
@@ -114,12 +115,12 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
     # ---- per-job RPCs (unchanged from M1) ----
 
     @mcp.tool()
-    def run(host: str, script: str, name: str = "") -> dict:
+    def run(host: str, script: str, name: str = "") -> dict[str, Any]:
         resp = hub.run(host=host, script=script, name=name)
         return {"job_id": resp.job_id, "state": int(resp.state)}
 
     @mcp.tool()
-    def status(job_id: str) -> dict:
+    def status(job_id: str) -> dict[str, Any]:
         resp = hub.status(job_id)
         return {
             "job_id": resp.job_id,
@@ -134,14 +135,14 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
         }
 
     @mcp.tool()
-    def kill(job_id: str, grace_sec: float = 10.0, force: bool = False) -> dict:
+    def kill(job_id: str, grace_sec: float = 10.0, force: bool = False) -> dict[str, Any]:
         resp = hub.kill(job_id, grace_sec=grace_sec, force=force)
         return {"killed": resp.killed, "state": int(resp.state)}
 
     @mcp.tool()
     def logs(
         job_id: str, tail_lines: int = 0, include_stderr: bool = False
-    ) -> dict:
+    ) -> dict[str, Any]:
         resp = hub.logs(
             job_id,
             tail_lines=tail_lines if tail_lines > 0 else None,
@@ -155,7 +156,7 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
         }
 
     @mcp.tool()
-    def whoami(host: str) -> dict:
+    def whoami(host: str) -> dict[str, Any]:
         resp = hub.whoami(host)
         return {
             "lotsman_version": resp.lotsman_version,
@@ -167,6 +168,81 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
             "default_npool": resp.default_npool,
             "mpirun_required": resp.mpirun_required,
             "known_pitfalls": list(resp.known_pitfalls),
+        }
+
+    # ---- filesystem ----
+
+    @mcp.tool()
+    def upload(
+        host: str,
+        path: str,
+        content: str = "",
+        content_b64: str = "",
+        create_parents: bool = True,
+        overwrite: bool = False,
+        executable: bool = False,
+    ) -> dict[str, Any]:
+        """Write a text or base64-encoded file to a host."""
+        if content_b64:
+            payload = base64.b64decode(content_b64)
+        else:
+            payload = content.encode("utf-8")
+        resp = hub.upload(
+            host,
+            path=path,
+            content=payload,
+            create_parents=create_parents,
+            overwrite=overwrite,
+            executable=executable,
+        )
+        return {
+            "path": resp.path,
+            "bytes_written": resp.bytes_written,
+            "sha256": resp.sha256,
+        }
+
+    @mcp.tool()
+    def mkdir(
+        host: str,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+    ) -> dict[str, Any]:
+        """Create a directory on a host."""
+        resp = hub.mkdir(host, path=path, parents=parents, exist_ok=exist_ok)
+        return {"path": resp.path}
+
+    @mcp.tool()
+    def ls(host: str, path: str) -> list[dict[str, Any]]:
+        """List a directory on a host."""
+        return [_dir_entry_to_dict(e) for e in hub.ls(host, path).entries]
+
+    @mcp.tool()
+    def stat(host: str, path: str) -> dict[str, Any]:
+        """Return file metadata on a host."""
+        return _stat_to_dict(hub.stat(host, path))
+
+    @mcp.tool()
+    def cat(host: str, path: str, max_bytes: int = 0) -> dict[str, Any]:
+        """Read a file snapshot from a host."""
+        resp = hub.cat(host, path, max_bytes=max_bytes if max_bytes > 0 else None)
+        return {
+            "path": resp.path,
+            "content": resp.content.decode("utf-8", errors="replace"),
+            "content_b64": base64.b64encode(resp.content).decode("ascii"),
+            "total_bytes": resp.total_bytes,
+            "truncated": resp.truncated,
+        }
+
+    @mcp.tool()
+    def disk_free(host: str, path: str = ".") -> dict[str, Any]:
+        """Return filesystem capacity for a path on a host."""
+        resp = hub.disk_free(host, path)
+        return {
+            "path": resp.path,
+            "total_bytes": resp.total_bytes,
+            "used_bytes": resp.used_bytes,
+            "free_bytes": resp.free_bytes,
         }
 
     # ---- watchdogs / events ----
@@ -188,7 +264,8 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
     @mcp.tool()
     def events(job_id: str, since_unix_ms: int = 0) -> list[dict[str, Any]]:
         """Snapshot of events for a job (alias of watchdog_history)."""
-        return watchdog_history(job_id, since_unix_ms=since_unix_ms)
+        resp = hub.watchdog_history(job_id, since_unix_ms=since_unix_ms)
+        return [_event_to_dict(e) for e in resp.events]
 
     @mcp.tool()
     def events_all(
@@ -260,4 +337,24 @@ def _event_to_dict(e: Any) -> dict[str, Any]:
         "detail": e.detail,
         "severity": e.severity,
         "data": dict(e.data),
+    }
+
+
+def _dir_entry_to_dict(e: Any) -> dict[str, Any]:
+    return {
+        "name": e.name,
+        "path": e.path,
+        "is_dir": e.is_dir,
+        "size_bytes": e.size_bytes,
+        "mtime_unix_ms": e.mtime_unix_ms,
+    }
+
+
+def _stat_to_dict(s: Any) -> dict[str, Any]:
+    return {
+        "path": s.path,
+        "exists": s.exists,
+        "is_dir": s.is_dir,
+        "size_bytes": s.size_bytes,
+        "mtime_unix_ms": s.mtime_unix_ms,
     }
