@@ -116,6 +116,26 @@ class LotsmanServiceStub(object):
                 request_serializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeRequest.SerializeToString,
                 response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeResponse.FromString,
                 _registered_method=True)
+        self.HarvestInventory = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/HarvestInventory',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestInventoryRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestInventoryResponse.FromString,
+                _registered_method=True)
+        self.Harvest = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Harvest',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestResponse.FromString,
+                _registered_method=True)
+        self.Download = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/Download',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadResponse.FromString,
+                _registered_method=True)
+        self.DownloadGlob = channel.unary_unary(
+                '/lotsman.v1.LotsmanService/DownloadGlob',
+                request_serializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadGlobRequest.SerializeToString,
+                response_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadGlobResponse.FromString,
+                _registered_method=True)
 
 
 class LotsmanServiceServicer(object):
@@ -254,6 +274,34 @@ class LotsmanServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def HarvestInventory(self, request, context):
+        """HarvestInventory previews which job files would be included by a harvest mode.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Harvest(self, request, context):
+        """Harvest creates a tar/tar.gz archive for a job and returns archive metadata.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Download(self, request, context):
+        """Download reads a single file snapshot.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DownloadGlob(self, request, context):
+        """DownloadGlob creates a guarded archive from a glob expression.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LotsmanServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -336,6 +384,26 @@ def add_LotsmanServiceServicer_to_server(servicer, server):
                     servicer.DiskFree,
                     request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeRequest.FromString,
                     response_serializer=lotsman_dot_v1_dot_lotsman__pb2.DiskFreeResponse.SerializeToString,
+            ),
+            'HarvestInventory': grpc.unary_unary_rpc_method_handler(
+                    servicer.HarvestInventory,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestInventoryRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestInventoryResponse.SerializeToString,
+            ),
+            'Harvest': grpc.unary_unary_rpc_method_handler(
+                    servicer.Harvest,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.HarvestResponse.SerializeToString,
+            ),
+            'Download': grpc.unary_unary_rpc_method_handler(
+                    servicer.Download,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadResponse.SerializeToString,
+            ),
+            'DownloadGlob': grpc.unary_unary_rpc_method_handler(
+                    servicer.DownloadGlob,
+                    request_deserializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadGlobRequest.FromString,
+                    response_serializer=lotsman_dot_v1_dot_lotsman__pb2.DownloadGlobResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -772,6 +840,114 @@ class LotsmanService(object):
             '/lotsman.v1.LotsmanService/DiskFree',
             lotsman_dot_v1_dot_lotsman__pb2.DiskFreeRequest.SerializeToString,
             lotsman_dot_v1_dot_lotsman__pb2.DiskFreeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HarvestInventory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/HarvestInventory',
+            lotsman_dot_v1_dot_lotsman__pb2.HarvestInventoryRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.HarvestInventoryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Harvest(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Harvest',
+            lotsman_dot_v1_dot_lotsman__pb2.HarvestRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.HarvestResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Download(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/Download',
+            lotsman_dot_v1_dot_lotsman__pb2.DownloadRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.DownloadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DownloadGlob(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lotsman.v1.LotsmanService/DownloadGlob',
+            lotsman_dot_v1_dot_lotsman__pb2.DownloadGlobRequest.SerializeToString,
+            lotsman_dot_v1_dot_lotsman__pb2.DownloadGlobResponse.FromString,
             options,
             channel_credentials,
             insecure,

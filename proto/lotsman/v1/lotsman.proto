@@ -71,6 +71,18 @@ service LotsmanService {
 
   // DiskFree returns free/used bytes for a filesystem path.
   rpc DiskFree(DiskFreeRequest) returns (DiskFreeResponse);
+
+  // HarvestInventory previews which job files would be included by a harvest mode.
+  rpc HarvestInventory(HarvestInventoryRequest) returns (HarvestInventoryResponse);
+
+  // Harvest creates a tar/tar.gz archive for a job and returns archive metadata.
+  rpc Harvest(HarvestRequest) returns (HarvestResponse);
+
+  // Download reads a single file snapshot.
+  rpc Download(DownloadRequest) returns (DownloadResponse);
+
+  // DownloadGlob creates a guarded archive from a glob expression.
+  rpc DownloadGlob(DownloadGlobRequest) returns (DownloadGlobResponse);
 }
 
 enum JobState {
@@ -313,4 +325,73 @@ message DiskFreeResponse {
   uint64 total_bytes = 2;
   uint64 used_bytes = 3;
   uint64 free_bytes = 4;
+}
+
+// ---- harvest / download ----
+
+message HarvestEntry {
+  string path = 1;
+  uint64 size_bytes = 2;
+  bool included = 3;
+  string reason = 4;
+}
+
+message HarvestInventoryRequest {
+  string job_id = 1;
+  // "essential" | "full" | "debug"
+  string mode = 2;
+}
+
+message HarvestInventoryResponse {
+  string job_id = 1;
+  string mode = 2;
+  repeated HarvestEntry entries = 3;
+  uint64 included_bytes = 4;
+}
+
+message HarvestRequest {
+  string job_id = 1;
+  // "essential" | "full" | "debug"
+  string mode = 2;
+  // "tar" | "tar.gz"
+  string format = 3;
+}
+
+message HarvestResponse {
+  string job_id = 1;
+  string mode = 2;
+  string format = 3;
+  string archive_path = 4;
+  uint64 archive_bytes = 5;
+  string sha256 = 6;
+  repeated HarvestEntry entries = 7;
+}
+
+message DownloadRequest {
+  string path = 1;
+  optional uint64 max_bytes = 2;
+}
+
+message DownloadResponse {
+  string path = 1;
+  bytes content = 2;
+  uint64 total_bytes = 3;
+  bool truncated = 4;
+}
+
+message DownloadGlobRequest {
+  string pattern = 1;
+  // "tar" | "tar.gz"
+  string format = 2;
+  // Must be >= total matched GB when match size exceeds the hard safety limit.
+  double confirm_size_gb = 3;
+}
+
+message DownloadGlobResponse {
+  string pattern = 1;
+  string format = 2;
+  string archive_path = 3;
+  uint64 archive_bytes = 4;
+  string sha256 = 5;
+  repeated HarvestEntry entries = 6;
 }

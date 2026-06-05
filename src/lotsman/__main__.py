@@ -10,6 +10,7 @@ from types import FrameType
 
 import grpc
 
+from lotsman.scout.cli import main as scout_main
 from lotsman.server import LotsmanService
 from lotsman.v1 import lotsman_pb2_grpc
 from lotsman.watchdogs import Check, DiskLowCheck, GpuIdleCheck, ProcessExitOomCheck
@@ -74,6 +75,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scout(args: argparse.Namespace) -> int:
+    return scout_main(args.scout_args)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lotsman", description="Lotsman in-container daemon")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -86,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--manifest", help="path to /etc/lotsman/manifest.toml")
     p_serve.add_argument("--workers", type=int, default=8)
     p_serve.set_defaults(func=cmd_serve)
+
+    p_scout = sub.add_parser("scout", help="Run instance hardware scout probes")
+    p_scout.add_argument("scout_args", nargs=argparse.REMAINDER)
+    p_scout.set_defaults(func=cmd_scout)
 
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)

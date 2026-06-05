@@ -26,6 +26,7 @@ dev = [
 
 [project.scripts]
 lotsman = "lotsman.__main__:main"
+lotsman-scout = "lotsman.scout.cli:main"
 marina = "marina.__main__:main"
 
 [build-system]
@@ -35,6 +36,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["lotsman*", "marina*"]
+
+[tool.setuptools.package-data]
+"lotsman.scout" = ["*.sh"]
 
 [tool.ruff]
 line-length = 100

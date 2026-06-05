@@ -58,6 +58,20 @@ class LotsmanServiceStub:
     def DiskFree(
         self, request: lotsman_pb2.DiskFreeRequest, timeout: float | None = None
     ) -> lotsman_pb2.DiskFreeResponse: ...
+    def HarvestInventory(
+        self,
+        request: lotsman_pb2.HarvestInventoryRequest,
+        timeout: float | None = None,
+    ) -> lotsman_pb2.HarvestInventoryResponse: ...
+    def Harvest(
+        self, request: lotsman_pb2.HarvestRequest, timeout: float | None = None
+    ) -> lotsman_pb2.HarvestResponse: ...
+    def Download(
+        self, request: lotsman_pb2.DownloadRequest, timeout: float | None = None
+    ) -> lotsman_pb2.DownloadResponse: ...
+    def DownloadGlob(
+        self, request: lotsman_pb2.DownloadGlobRequest, timeout: float | None = None
+    ) -> lotsman_pb2.DownloadGlobResponse: ...
 
 
 class LotsmanServiceServicer:

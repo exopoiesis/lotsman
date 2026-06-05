@@ -245,6 +245,82 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
             "free_bytes": resp.free_bytes,
         }
 
+    # ---- harvest / download ----
+
+    @mcp.tool()
+    def harvest_inventory(job_id: str, mode: str = "essential") -> dict[str, Any]:
+        """Preview which files a job harvest would include."""
+        resp = hub.harvest_inventory(job_id, mode=mode)
+        return {
+            "job_id": resp.job_id,
+            "mode": resp.mode,
+            "included_bytes": resp.included_bytes,
+            "entries": [_harvest_entry_to_dict(e) for e in resp.entries],
+        }
+
+    @mcp.tool()
+    def harvest(
+        job_id: str,
+        mode: str = "essential",
+        format: str = "tar.gz",
+        include_content: bool = False,
+    ) -> dict[str, Any]:
+        """Create a guarded job harvest archive."""
+        resp = hub.harvest(job_id, mode=mode, format=format)
+        out: dict[str, Any] = {
+            "job_id": resp.job_id,
+            "mode": resp.mode,
+            "format": resp.format,
+            "archive_path": resp.archive_path,
+            "archive_bytes": resp.archive_bytes,
+            "sha256": resp.sha256,
+            "entries": [_harvest_entry_to_dict(e) for e in resp.entries],
+        }
+        if include_content:
+            host = resp.job_id.split("/", 1)[0]
+            content = hub.download(host, resp.archive_path).content
+            out["archive_b64"] = base64.b64encode(content).decode("ascii")
+        return out
+
+    @mcp.tool()
+    def download(host: str, path: str, max_bytes: int = 0) -> dict[str, Any]:
+        """Download one file snapshot from a host."""
+        resp = hub.download(host, path, max_bytes=max_bytes if max_bytes > 0 else None)
+        return {
+            "path": resp.path,
+            "content_b64": base64.b64encode(resp.content).decode("ascii"),
+            "total_bytes": resp.total_bytes,
+            "truncated": resp.truncated,
+        }
+
+    @mcp.tool()
+    def download_glob(
+        host: str,
+        pattern: str,
+        format: str = "tar.gz",
+        confirm_size_gb: float = 0.0,
+        include_content: bool = False,
+    ) -> dict[str, Any]:
+        """Create a guarded archive from a glob expression."""
+        resp = hub.download_glob(
+            host,
+            pattern=pattern,
+            format=format,
+            confirm_size_gb=confirm_size_gb,
+        )
+        out: dict[str, Any] = {
+            "pattern": resp.pattern,
+            "format": resp.format,
+            "archive_path": resp.archive_path,
+            "archive_bytes": resp.archive_bytes,
+            "sha256": resp.sha256,
+            "entries": [_harvest_entry_to_dict(e) for e in resp.entries],
+        }
+        if include_content:
+            content = hub.download(host, resp.archive_path).content
+            out["archive_b64"] = base64.b64encode(content).decode("ascii")
+        return out
+
     # ---- watchdogs / events ----
 
     @mcp.tool()
@@ -357,4 +433,13 @@ def _stat_to_dict(s: Any) -> dict[str, Any]:
         "is_dir": s.is_dir,
         "size_bytes": s.size_bytes,
         "mtime_unix_ms": s.mtime_unix_ms,
+    }
+
+
+def _harvest_entry_to_dict(e: Any) -> dict[str, Any]:
+    return {
+        "path": e.path,
+        "size_bytes": e.size_bytes,
+        "included": e.included,
+        "reason": e.reason,
     }

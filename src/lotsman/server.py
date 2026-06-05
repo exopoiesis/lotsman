@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import glob as globlib
 import hashlib
 import queue
 import shutil
 import subprocess
+import tarfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -33,6 +35,27 @@ from lotsman.watchdogs import (
 TAIL_POLL_INTERVAL_S = 0.05
 WATCHDOG_TICK_S = 1.0
 EVENT_QUEUE_POLL_S = 0.5
+ESSENTIAL_MAX_FILE_BYTES = 100 * 1024 * 1024
+GLOB_HARD_LIMIT_GB = 5.0
+HARVEST_ESSENTIAL_SUFFIXES = {
+    ".cif",
+    ".csv",
+    ".dat",
+    ".err",
+    ".in",
+    ".json",
+    ".log",
+    ".out",
+    ".pwi",
+    ".pwo",
+    ".py",
+    ".sh",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".xyz",
+}
 
 _STATE_NAMES: dict[int, str] = {
     lotsman_pb2.JOB_STATE_UNSPECIFIED: "UNSPECIFIED",
@@ -58,6 +81,41 @@ def _entry_for(path: Path) -> lotsman_pb2.DirEntry:
         size_bytes=0 if path.is_dir() else st.st_size,
         mtime_unix_ms=int(st.st_mtime * 1000),
     )
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _normal_mode(mode: str) -> str:
+    value = mode or "essential"
+    if value not in {"essential", "full", "debug"}:
+        raise ValueError("mode must be one of: essential, full, debug")
+    return value
+
+
+def _normal_archive_format(fmt: str) -> str:
+    value = fmt or "tar.gz"
+    if value not in {"tar", "tar.gz"}:
+        raise ValueError("format must be one of: tar, tar.gz")
+    return value
+
+
+def _is_harvest_archive(path: Path) -> bool:
+    return path.name.startswith(("harvest_", "download_glob_")) and (
+        path.suffix == ".tar" or path.name.endswith(".tar.gz")
+    )
+
+
+def _tar_arcname(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root)).replace("\\", "/")
+    except ValueError:
+        return path.name
 
 
 def _abort(
@@ -165,6 +223,73 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
                 if job.state == lotsman_pb2.RUNNING:
                     return job
         return None
+
+    def _job_or_abort(
+        self, job_id: str, context: grpc.ServicerContext
+    ) -> Job:
+        job = self.jobs.get(job_id)
+        if job is None:
+            _abort(context, grpc.StatusCode.NOT_FOUND, f"unknown job {job_id!r}")
+        return job
+
+    def _harvest_entries(
+        self, job: Job, mode: str
+    ) -> list[lotsman_pb2.HarvestEntry]:
+        mode = _normal_mode(mode)
+        entries: list[lotsman_pb2.HarvestEntry] = []
+        for path in sorted(job.job_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            size = path.stat().st_size
+            included = False
+            reason = ""
+
+            if _is_harvest_archive(path):
+                reason = "generated harvest archive"
+            elif mode == "debug":
+                included = True
+                reason = "debug includes all regular files"
+            elif mode == "full":
+                included = True
+                reason = "full includes all regular files"
+            elif path.name in {"script.sh", "stdout.log", "stderr.log"}:
+                included = True
+                reason = "essential job script/log"
+            elif path.suffix.lower() in HARVEST_ESSENTIAL_SUFFIXES:
+                if size <= ESSENTIAL_MAX_FILE_BYTES:
+                    included = True
+                    reason = "essential suffix"
+                else:
+                    reason = "essential skips files >100 MB"
+            else:
+                reason = "not in essential suffix set"
+
+            entries.append(
+                lotsman_pb2.HarvestEntry(
+                    path=str(path),
+                    size_bytes=size,
+                    included=included,
+                    reason=reason,
+                )
+            )
+        return entries
+
+    def _write_archive(
+        self,
+        archive_path: Path,
+        files: list[Path],
+        *,
+        root: Path,
+        fmt: str,
+    ) -> None:
+        if fmt == "tar.gz":
+            with tarfile.open(archive_path, "w:gz") as tf:
+                for path in files:
+                    tf.add(path, arcname=_tar_arcname(path, root), recursive=False)
+            return
+        with tarfile.open(archive_path, "w") as tf:
+            for path in files:
+                tf.add(path, arcname=_tar_arcname(path, root), recursive=False)
 
     # ----- RPCs -----
 
@@ -573,6 +698,131 @@ class LotsmanService(lotsman_pb2_grpc.LotsmanServiceServicer):
             total_bytes=usage.total,
             used_bytes=usage.used,
             free_bytes=usage.free,
+        )
+
+    def HarvestInventory(
+        self,
+        request: lotsman_pb2.HarvestInventoryRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.HarvestInventoryResponse:
+        try:
+            mode = _normal_mode(request.mode)
+        except ValueError as e:
+            _abort(context, grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        job = self._job_or_abort(request.job_id, context)
+        entries = self._harvest_entries(job, mode)
+        return lotsman_pb2.HarvestInventoryResponse(
+            job_id=request.job_id,
+            mode=mode,
+            entries=entries,
+            included_bytes=sum(e.size_bytes for e in entries if e.included),
+        )
+
+    def Harvest(
+        self,
+        request: lotsman_pb2.HarvestRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.HarvestResponse:
+        try:
+            mode = _normal_mode(request.mode)
+            fmt = _normal_archive_format(request.format)
+        except ValueError as e:
+            _abort(context, grpc.StatusCode.INVALID_ARGUMENT, str(e))
+
+        job = self._job_or_abort(request.job_id, context)
+        entries = self._harvest_entries(job, mode)
+        included = [Path(e.path) for e in entries if e.included]
+        suffix = ".tar.gz" if fmt == "tar.gz" else ".tar"
+        archive_path = job.job_dir / f"harvest_{mode}{suffix}"
+        self._write_archive(archive_path, included, root=job.job_dir, fmt=fmt)
+        return lotsman_pb2.HarvestResponse(
+            job_id=request.job_id,
+            mode=mode,
+            format=fmt,
+            archive_path=str(archive_path),
+            archive_bytes=archive_path.stat().st_size,
+            sha256=_file_sha256(archive_path),
+            entries=entries,
+        )
+
+    def Download(
+        self,
+        request: lotsman_pb2.DownloadRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.DownloadResponse:
+        path = Path(request.path)
+        if not path.exists():
+            _abort(context, grpc.StatusCode.NOT_FOUND, f"path not found: {request.path!r}")
+        if path.is_dir():
+            _abort(
+                context,
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"path is a directory: {request.path!r}",
+            )
+        total = path.stat().st_size
+        if request.HasField("max_bytes") and request.max_bytes < total:
+            with path.open("rb") as f:
+                content = f.read(request.max_bytes)
+            truncated = True
+        else:
+            content = path.read_bytes()
+            truncated = False
+        return lotsman_pb2.DownloadResponse(
+            path=str(path),
+            content=content,
+            total_bytes=total,
+            truncated=truncated,
+        )
+
+    def DownloadGlob(
+        self,
+        request: lotsman_pb2.DownloadGlobRequest,
+        context: grpc.ServicerContext,
+    ) -> lotsman_pb2.DownloadGlobResponse:
+        try:
+            fmt = _normal_archive_format(request.format)
+        except ValueError as e:
+            _abort(context, grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        if not request.pattern:
+            _abort(context, grpc.StatusCode.INVALID_ARGUMENT, "pattern is required")
+
+        paths = [
+            Path(p)
+            for p in globlib.glob(request.pattern, recursive=True)
+            if Path(p).is_file()
+        ]
+        paths = sorted(paths, key=lambda p: str(p))
+        total = sum(p.stat().st_size for p in paths)
+        total_gb = total / (1024**3)
+        if total_gb > GLOB_HARD_LIMIT_GB and request.confirm_size_gb < total_gb:
+            _abort(
+                context,
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"glob matches {total_gb:.2f} GB; set confirm_size_gb >= {total_gb:.2f}",
+            )
+
+        archive_dir = self.jobs_dir / "_downloads"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        suffix = ".tar.gz" if fmt == "tar.gz" else ".tar"
+        archive_path = archive_dir / f"download_glob_{ULID()}{suffix}"
+        root = Path(paths[0]).parent if paths else archive_dir
+        self._write_archive(archive_path, paths, root=root, fmt=fmt)
+        entries = [
+            lotsman_pb2.HarvestEntry(
+                path=str(p),
+                size_bytes=p.stat().st_size,
+                included=True,
+                reason="glob match",
+            )
+            for p in paths
+        ]
+        return lotsman_pb2.DownloadGlobResponse(
+            pattern=request.pattern,
+            format=fmt,
+            archive_path=str(archive_path),
+            archive_bytes=archive_path.stat().st_size,
+            sha256=_file_sha256(archive_path),
+            entries=entries,
         )
 
     def shutdown(self) -> None:

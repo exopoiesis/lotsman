@@ -295,6 +295,48 @@ class Hub:
     def disk_free(self, host: str, path: str) -> lotsman_pb2.DiskFreeResponse:
         return self._stub_for(host).DiskFree(lotsman_pb2.DiskFreeRequest(path=path))
 
+    # ---- harvest / download ----
+
+    def harvest_inventory(
+        self, job_id: str, mode: str = "essential"
+    ) -> lotsman_pb2.HarvestInventoryResponse:
+        return self._route(job_id).HarvestInventory(
+            lotsman_pb2.HarvestInventoryRequest(job_id=job_id, mode=mode)
+        )
+
+    def harvest(
+        self,
+        job_id: str,
+        mode: str = "essential",
+        format: str = "tar.gz",
+    ) -> lotsman_pb2.HarvestResponse:
+        return self._route(job_id).Harvest(
+            lotsman_pb2.HarvestRequest(job_id=job_id, mode=mode, format=format)
+        )
+
+    def download(
+        self, host: str, path: str, max_bytes: int | None = None
+    ) -> lotsman_pb2.DownloadResponse:
+        req = lotsman_pb2.DownloadRequest(path=path)
+        if max_bytes is not None:
+            req.max_bytes = max_bytes
+        return self._stub_for(host).Download(req)
+
+    def download_glob(
+        self,
+        host: str,
+        pattern: str,
+        format: str = "tar.gz",
+        confirm_size_gb: float = 0.0,
+    ) -> lotsman_pb2.DownloadGlobResponse:
+        return self._stub_for(host).DownloadGlob(
+            lotsman_pb2.DownloadGlobRequest(
+                pattern=pattern,
+                format=format,
+                confirm_size_gb=confirm_size_gb,
+            )
+        )
+
     # ---- watchdogs / events ----
 
     def watchdog_list(

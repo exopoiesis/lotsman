@@ -8,8 +8,22 @@ LABEL org.opencontainers.image.description="Lotsman in-container daemon"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # bash is a core runtime dependency — Lotsman invokes scripts via bash.
-# python:3.13-slim is debian-based and already includes /bin/bash; no extra
-# packages needed for the smoke image.
+# Scout uses fio plus standard Linux inventory tools. build-essential/cmake/git
+# are intentionally present so CUDA-derived images can build optional NVIDIA
+# probes (nvbandwidth, nccl-tests) without changing the Lotsman layer.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    cmake \
+    curl \
+    fio \
+    git \
+    build-essential \
+    numactl \
+    pciutils \
+    procps \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/lotsman
 
@@ -17,6 +31,8 @@ WORKDIR /opt/lotsman
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 COPY proto/ ./proto/
+
+RUN chmod +x src/lotsman/scout/install_gpu_tools.sh
 
 # Install — registers `lotsman` and `marina` console commands via
 # [project.scripts]. No editable mode in production image.

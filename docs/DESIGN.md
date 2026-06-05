@@ -282,16 +282,16 @@ Override: `with_recommended_filters=false` — raw поиск без наших 
 
 | Команда | Параметры | Возврат |
 |---|---|---|
-| `harvest_inventory` | `jobId`, `mode: essential\|full\|debug` | `[{path, size, included, reason}]` — preview |
-| `harvest` | `jobId`, `mode`, `format: tar\|tar.gz\|stream`, `chunk_mb?` | manifest + chunked stream |
-| `download` | `path`, `range?` | bytes (для одиночных мелких файлов) |
-| `download_glob` | `glob`, `confirm_size_gb?` | **hard-fail если match >5 GB без явного confirm — защита от scp -r prod_dir на 82 GB wfc** |
+| `harvest_inventory` | `jobId`, `mode: essential\|full\|debug` | DONE 2026-06-02. `[{path, size_bytes, included, reason}]` + `included_bytes` preview |
+| `harvest` | `jobId`, `mode`, `format: tar\|tar.gz` | DONE 2026-06-02. Создаёт archive в job-dir, возвращает `archive_path`, `archive_bytes`, `sha256`, manifest. MCP base64 content только при explicit `include_content=true` |
+| `download` | `host`, `path`, `max_bytes?` | DONE 2026-06-02. bytes/base64 для одиночных файлов, с truncation metadata |
+| `download_glob` | `host`, `pattern`, `format: tar\|tar.gz`, `confirm_size_gb?` | DONE 2026-06-02. Создаёт guarded archive; **hard-fail если match >5 GB без явного confirm — защита от scp -r prod_dir на 82 GB wfc** |
 
 Modes:
 - **essential** — scripts + .in/.json + .out + последний restart point + monitor
   logs (≈ что мы вручную делаем через `safe_harvest.sh`).
-- **full** — + .traj/checkpoints (warn если >100 MB).
-- **debug** — + cores + intermediate wfc.
+- **full** — все regular files кроме generated harvest archives.
+- **debug** — все regular files кроме generated harvest archives; reserved for cores/intermediate wfc use.
 
 ### Filesystem (избежать quoting hell)
 
@@ -472,6 +472,7 @@ impossible-to-skip.
 - **M2-A — sea abstraction + DockerSea DONE 2026-05-05.** Provider-agnostic `Sea` Protocol (search/recommend/create/destroy/stop/start/cost_summary/status), `DockerSea` impl over `docker --context <ctx>` (gomer/loki/local). Workload presets `dft_paper_grade / dft_smoke / mlip / aimd_long` encoding project DEADLY_MISTAKES (FP64 only, GHz≥5.0, reliability≥0.95). Marina config `[seas.NAME]` sections + factory dispatch. MCP API: `sea_list / sea_search / sea_recommend / sea_status / cost_summary` + `host_create / host_add / host_destroy / host_stop / host_start / host_list`. Bumps total tests 66→146, all green in 6s. Provisioning testable on free local docker — no Vast.ai burn.
 - **M2-B — watchdog system + events fan-out DONE 2026-05-05.** Per-Lotsman `Supervisor` with three production checks (`DiskLowCheck`, `ProcessExitOomCheck`, `GpuIdleCheck`); fires at most once per check, idempotent. New gRPC RPCs `Events` (server-stream), `WatchdogList`, `WatchdogHistory`, `EventsHistoryAll`. Marina-side `Hub.events_all` fan-out across hosts. MCP tools `watchdog_list / watchdog_history / events / events_all`. Sea Protocol gains `env: dict[str, str]` on `create()` so admin can tune watchdog thresholds per-host (`LOTSMAN_DISK_LOW_GB`, `LOTSMAN_GPU_IDLE_*`). L3 smoke: `disk_low` forced fire on a real Docker container observed via Marina end-to-end. 195 tests total, ~84 s wall. **Tier 1 polling** is the delivered transport — sufficient for the `/loop`+`ScheduleWakeup` pattern Claude Code uses today.
 - **M2-Files — filesystem staging API DONE 2026-06-02.** First command layer for uploading scripts/inputs to host disk without shell quoting: gRPC `Upload / Mkdir / Ls / Stat / Cat / DiskFree`, Marina Hub proxies, MCP tools `upload / mkdir / ls / stat / cat / disk_free`. `upload` supports UTF-8 text or base64 payloads, parent creation, overwrite guard, executable bit, and sha256 response. `rm` intentionally deferred until safe-rm policy is implemented. Windows local dev hardening: `resolve_bash()` now prefers Git Bash over the WSL shim. Typed protobuf `.pyi` facades added so `mypy src tests` is green. 204 tests total; ruff, mypy, pytest clean.
+- **M2-Harvest — guarded harvest/download API DONE 2026-06-02.** gRPC `HarvestInventory / Harvest / Download / DownloadGlob`, Marina Hub proxies, MCP tools `harvest_inventory / harvest / download / download_glob`. `harvest` creates tar/tar.gz archives in job-dir and returns manifest + checksum; MCP content transfer is opt-in via `include_content=true`. `download_glob` has 5 GB hard guard unless `confirm_size_gb` covers matched total. 210 tests total; ruff, mypy, pytest clean.
 - **M2-B-Tier2 (deferred — upstream blocker).** Native MCP Tasks API: `mcp` Python SDK 1.26.0 ships Task *types* but neither `FastMCP` nor lowlevel `Server` surfaces task **handlers**. Revisit when SDK exposes them.
 - **M2-C — `claude/channel` push prototype (deferred — upstream blocker).** Undocumented in standard MCP; Claude Code-specific capability mentioned in this design doc with explicit caveat. Standard `LoggingMessageNotification` flows only within active sessions, doesn't wake a sleeping agent. In the meantime, Tier 1 polling already meets the "save my night" goal — real-time push would just reduce wake latency from ~30 min to seconds.
 - **M2-A-Vast — `VastSea` (deferred per project decision).** "Сначала всё через гомер" — until owned-hardware flow is fully proven, no Vast.ai burn.

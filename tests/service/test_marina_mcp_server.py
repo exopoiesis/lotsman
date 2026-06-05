@@ -34,6 +34,11 @@ EXPECTED_TOOLS = {
     "stat",
     "cat",
     "disk_free",
+    # harvest
+    "harvest_inventory",
+    "harvest",
+    "download",
+    "download_glob",
     # watchdogs / events
     "watchdog_list",
     "watchdog_history",

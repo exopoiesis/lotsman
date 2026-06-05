@@ -4,8 +4,8 @@
 > the local hazards — MSYS path traps, em-dash crashes, mpirun silent-fails,
 > SIGTERM-10s drills, ENVIRON bulk rejection, ASE quirks, and the rest.
 
-**Status:** M2 filesystem staging complete (2026-06-02). 16 gRPC RPCs,
-204 tests, two daemon CLIs, Dockerfile validated on remote Linux Docker.
+**Status:** M2 filesystem + harvest complete (2026-06-02). 20 gRPC RPCs,
+210 tests, two daemon CLIs, Dockerfile validated on remote Linux Docker.
 See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Quick start
@@ -22,7 +22,7 @@ pip install -e .[dev]
 python -m grpc_tools.protoc -I proto --python_out=src --grpc_python_out=src \
     proto/lotsman/v1/lotsman.proto
 
-# Run tests (204)
+# Run tests (210)
 pytest
 
 # Run a Lotsman daemon (in a container or locally for testing)
@@ -46,6 +46,58 @@ docker run -d --name lotsman-test lotsman:smoke
 docker cp scripts/docker_smoke.py lotsman-test:/tmp/smoke.py
 docker exec lotsman-test python /tmp/smoke.py
 ```
+
+## Instance Scout
+
+`lotsman scout` is a quick hardware acceptance test for a fresh compute
+instance. It is not a QE/CP2K/ABACUS smoke run; it fingerprints the machine so
+you can compare instance types before burning money on production calculations.
+
+Basic run inside a compute container:
+
+```bash
+lotsman scout run --workspace /workspace --out /workspace/scout.json
+```
+
+Useful short run while developing locally:
+
+```bash
+lotsman scout run \
+  --workspace /tmp/lotsman-scout \
+  --out /tmp/scout.json \
+  --fio-size-mb 256 \
+  --fio-runtime-s 5 \
+  --pretty
+```
+
+The JSON report includes:
+
+| Probe | What it captures |
+|---|---|
+| Inventory | `cpu.max`, platform, `lscpu`, RAM, workspace disk, `nvidia-smi`, GPU topology |
+| `fio` | Sequential read/write and mixed random 4k I/O on the selected workspace |
+| STREAM | CPU memory bandwidth, if a `stream`, `stream_c`, or `stream.omp` binary exists |
+| `nvidia-smi dmon` | Short GPU utilization/power/clock/memory telemetry sample |
+| `nvbandwidth` | GPU memory, PCIe, and GPU-GPU bandwidth, if installed |
+| DCGM | Optional diagnostics via `--dcgm`, if `dcgmi` works in the image |
+
+DCGM can be useful on well-prepared NVIDIA images, but it may require host
+services or permissions. Keep it opt-in:
+
+```bash
+lotsman scout run --workspace /workspace --out /workspace/scout-dcgm.json --dcgm
+```
+
+The base Lotsman Dockerfile installs `fio` and standard Linux inventory/build
+tools. CUDA-derived images can also build optional NVIDIA probes:
+
+```bash
+bash src/lotsman/scout/install_gpu_tools.sh
+```
+
+That script builds `nvbandwidth` when `nvcc` is available and builds
+`nccl-tests` when NCCL headers are present. Missing CUDA/NCCL is treated as a
+clean skip so the same layer can be reused across CPU-only and GPU images.
 
 ## Why
 

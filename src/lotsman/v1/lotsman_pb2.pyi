@@ -361,3 +361,119 @@ class DiskFreeResponse(_ProtoMessage):
         used_bytes: int = 0,
         free_bytes: int = 0,
     ) -> None: ...
+
+
+class HarvestEntry(_ProtoMessage):
+    path: str
+    size_bytes: int
+    included: bool
+    reason: str
+    def __init__(
+        self,
+        path: str = "",
+        size_bytes: int = 0,
+        included: bool = False,
+        reason: str = "",
+    ) -> None: ...
+
+
+class HarvestInventoryRequest(_ProtoMessage):
+    job_id: str
+    mode: str
+    def __init__(self, job_id: str = "", mode: str = "") -> None: ...
+
+
+class HarvestInventoryResponse(_ProtoMessage):
+    job_id: str
+    mode: str
+    entries: list[HarvestEntry]
+    included_bytes: int
+    def __init__(
+        self,
+        job_id: str = "",
+        mode: str = "",
+        entries: list[HarvestEntry] | None = None,
+        included_bytes: int = 0,
+    ) -> None: ...
+
+
+class HarvestRequest(_ProtoMessage):
+    job_id: str
+    mode: str
+    format: str
+    def __init__(
+        self,
+        job_id: str = "",
+        mode: str = "",
+        format: str = "",
+    ) -> None: ...
+
+
+class HarvestResponse(_ProtoMessage):
+    job_id: str
+    mode: str
+    format: str
+    archive_path: str
+    archive_bytes: int
+    sha256: str
+    entries: list[HarvestEntry]
+    def __init__(
+        self,
+        job_id: str = "",
+        mode: str = "",
+        format: str = "",
+        archive_path: str = "",
+        archive_bytes: int = 0,
+        sha256: str = "",
+        entries: list[HarvestEntry] | None = None,
+    ) -> None: ...
+
+
+class DownloadRequest(_ProtoMessage):
+    path: str
+    max_bytes: int
+    def __init__(self, path: str = "", max_bytes: int | None = None) -> None: ...
+
+
+class DownloadResponse(_ProtoMessage):
+    path: str
+    content: bytes
+    total_bytes: int
+    truncated: bool
+    def __init__(
+        self,
+        path: str = "",
+        content: bytes = b"",
+        total_bytes: int = 0,
+        truncated: bool = False,
+    ) -> None: ...
+
+
+class DownloadGlobRequest(_ProtoMessage):
+    pattern: str
+    format: str
+    confirm_size_gb: float
+    def __init__(
+        self,
+        pattern: str = "",
+        format: str = "",
+        confirm_size_gb: float = 0.0,
+    ) -> None: ...
+
+
+class DownloadGlobResponse(_ProtoMessage):
+    pattern: str
+    format: str
+    archive_path: str
+    archive_bytes: int
+    sha256: str
+    entries: list[HarvestEntry]
+    def __init__(
+        self,
+        pattern: str = "",
+        format: str = "",
+        archive_path: str = "",
+        archive_bytes: int = 0,
+        sha256: str = "",
+        entries: list[HarvestEntry] | None = None,
+    ) -> None: ...

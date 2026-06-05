@@ -43,6 +43,38 @@ through SSH/docker shell layers.
 - `mypy src tests`
 - `pytest -q` → 204 passed
 
+## [Unreleased] — harvest and guarded download API (2026-06-02)
+
+The first working harvest layer for completed jobs: preview what would be
+collected, build a job archive, and retrieve files/archives without blind
+recursive copy.
+
+### Added
+
+- **gRPC harvest RPCs**:
+  - `HarvestInventory(job_id, mode)` previews included/excluded files.
+  - `Harvest(job_id, mode, format)` creates a `tar`/`tar.gz` archive in the
+    job directory and returns path, size, sha256, and manifest entries.
+  - `Download(path, max_bytes?)` reads one file snapshot.
+  - `DownloadGlob(pattern, format, confirm_size_gb)` creates a guarded archive
+    from matched files.
+- **Marina Hub proxy methods** for all harvest/download operations.
+- **MCP tools**: `harvest_inventory`, `harvest`, `download`, `download_glob`.
+  `harvest` and `download_glob` return archive metadata by default; callers
+  must opt into `include_content=true` to push base64 archive bytes through MCP.
+- **Safety defaults**:
+  - `essential` mode includes scripts, logs, common input/output text files,
+    and skips non-essential/large files.
+  - Generated harvest archives are excluded from subsequent harvests.
+  - `download_glob` hard-fails above 5 GB unless `confirm_size_gb` covers the
+    matched total.
+
+### Tested
+
+- `ruff check .`
+- `mypy src tests`
+- `pytest -q` → 210 passed
+
 ## [Unreleased] — M2-B: watchdog system + events fan-out (2026-05-05)
 
 Watchdog framework, three default checks, gRPC RPCs for events, Marina
