@@ -4,6 +4,132 @@ All notable changes to Lotsman are documented here. Format is loosely based on
 [Keep a Changelog](https://keepachangelog.com/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — VastSea search, host-fitness scoring & lifecycle (2026-06-17)
+
+Turns the Vast.ai backend into a usable daily tool: rich filtered search,
+two synthetic host-fitness scores for DFT, a ready-to-display result table, and
+a verified create→list→destroy lifecycle. Full design in
+[`docs/HOST_SCORING.md`](docs/HOST_SCORING.md).
+
+### Added — secrets / config
+
+- **`.env` loading** (`marina/dotenv.py`): `marina serve` loads a gitignored
+  `.env` (next to the config, e.g. `~/.lotsman/.env`, then cwd) before reading
+  any sea config, so `VAST_API_KEY` need not be exported into the MCP launcher's
+  environment. Self-contained parser (no `python-dotenv` dep); an exported var
+  wins over the file; only key *names* are logged, never values.
+- **`vastai_bin`** config: pin the full path to the `vastai` CLI when the marina
+  process PATH omits the per-user Python Scripts dir.
+
+### Added — search & filters (MCP `sea_search`)
+
+- **Family-aware `gpu_name`**: `"A100"` expands to
+  `gpu_name in [A100_PCIE,A100_SXM4]` (Vast has no bare "A100") via a curated
+  `_GPU_FAMILIES` map (A100/A800/H100/H200/V100/P100/B200); a specific model
+  matches exactly; a substring guard drops uncatalogued variants.
+- **Family-aware `cpu_name`** (python-side substring): `"trpro"` → AMD
+  Threadripper PRO 7/5/3 WX; else a literal substring ("5955WX", "EPYC 7763").
+- **`vram_gb`** exact filter, **`min_cuda`** (filters `cuda_max_good`, the
+  highest CUDA toolkit the host runs well — match to your image), and **`order`**
+  sort (`-` prefix = descending) over `cpu_ghz`/`dph`/`vram_gb`/`cpu_cores`/
+  `dlperf`/`dlperf_per_dollar`/`zcpu`/`zgpu`/`gpu_mem_bw`/`pcie_bw`/`cuda`.
+- Python-side filters/sorts widen the fetch to the whole verified market
+  (cap 2000) so a perf sort isn't truncated to the cheapest N — premium GPUs
+  (A100/H100/B200) now surface in `-zgpu`.
+
+### Added — host-fitness scores (`marina/seas/perf_score.py`)
+
+- **`zGPU`** — GPU-DFT (QE) score: geometric blend of per-GPU FP64 throughput
+  (datasheet table; consumer ≈ FP32/64) and VRAM bandwidth, sublinear multi-GPU
+  scaling, PCIe throttle. ~100 = one A100 PCIe; consumer cards score low.
+- **`zCPU`** — CPU-DFT (CP2K) score: roofline with a bandwidth-per-core cap and
+  a saturation knee at 8 cores (CP2K stops scaling past ~8; >12 adds ~1-2%), so
+  core count past the knee does not inflate it; scaled by core homogeneity
+  (Threadripper PRO / EPYC / Xeon = 1.0). ~100 = a well-fed knee at ~7 GHz.
+
+### Added — output & recommend
+
+- **Ready-to-display table** rendered server-side (saves agent tokens), fixed
+  columns: `ID GPU VRAM CUDA CPU cores RAM Disk zGPU zCPU DLP/$ vbw PCIe $/hr
+  geo` (`cores` = ours/total). `format="json"` for raw dicts.
+- New `Offer` fields surfaced: `cpu_name`, `cpu_cores_total`, `geolocation`,
+  `dlperf`, `dlperf_per_dollar`, `gpu_mem_bw_gbs`, `pcie_bw_gbs`,
+  `cuda_max_good`, `zcpu`, `zgpu`. (`reliability` parsed + filterable but no
+  longer shown — never used as a column.)
+- **`sea_recommend`** now ranks the offers that pass a preset's hard gate by
+  host fitness (`zgpu` for GPU-FP64 DFT, `dlperf` for FP32 MLIP) instead of raw
+  price, via a per-preset `rank_by` (overridable: `zgpu`/`zcpu`/`dlperf`/
+  `dlperf_per_dollar`/`price`).
+
+### Fixed / hardened — lifecycle robustness
+
+- **No indefinite MCP hangs on `vastai`**: each call runs under `cmd_timeout_s`
+  (default 45 s) and collects output via temp files, not pipes — a console-shim
+  child (`vastai.exe` → python) holding a pipe open can no longer wedge the MCP
+  server. Clear errors on timeout / missing binary.
+- **`create()` fails fast** on a doomed startup: a bad image, registry-auth, or
+  out-of-disk leaves `actual_status` at "loading" forever while the daemon
+  retries; we now detect the `status_msg` error and raise at once instead of
+  polling to the 30-min ready timeout.
+- **Short instance label** = the Marina host name (was `lotsman/<sea>/<name>`).
+- Verified end-to-end against real Vast.ai: `host_create` → `host_list` →
+  `host_destroy` (instance actually torn down, tunnel closed, billing stops).
+
+### Tests
+
+- 285 passing (ruff + mypy strict + pytest). New: `.env`, GPU/CPU family
+  expansion, perf_score (zGPU/zCPU references, knee, consumer gap), table
+  render + columns, recommend ranking, `min_cuda` query, fail-fast create,
+  short-label round-trip, temp-file/timeout runner.
+
+## [Unreleased] — VastSea: Vast.ai search & create (2026-06-16)
+
+The marketplace backend for the `Sea` abstraction. Marina can now search
+Vast.ai offers, recommend by workload preset, rent an instance and wait for it
+to come up, list/destroy/stop/start, and report balance + burn rate — all
+through the same injectable `Runner` used by `DockerSea`, so the suite never
+touches the network or a real account.
+
+### Added
+
+- **`marina/seas/vast_sea.py` — `VastSea`** implementing the full `Sea`
+  Protocol over the `vastai` CLI (`--raw` JSON):
+  - `search(filters, limit)` — builds a Vast query (`rentable`/`verified`/
+    `reliability>`/`dph_total<`/`num_gpus`/`gpu_name`, plus a raw `query`
+    escape hatch), `--order dph_total --limit N` (matches `infra/vast_find.sh`);
+    parses offers with proportional per-instance RAM/cores and a native-FP64
+    GPU table (A100/H100/V100/… only).
+  - `recommend(workload, budget, …)` — pushes cheap constraints into the query,
+    verifies the rest locally via the shared `PRESETS`/`matches()`, sorts by price.
+  - `create(image, offer_id, …)` — `vastai create instance … --ssh`, encodes the
+    Marina host name into the instance label, polls `show instances` until
+    `running` (30-min default timeout), then waits for sshd and opens an
+    `ssh -N -L <local>:127.0.0.1:<container_grpc_port>` tunnel so the gRPC
+    target becomes `127.0.0.1:<local>` (injectable clock/sleeper/forwarder).
+  - `list_instances` (reconciles name↔id from labels, preserves live tunnel
+    port), `destroy`/`stop` (tear the tunnel down), `start` (re-waits + reopens
+    the tunnel), `status`, `balance`, `cost_summary` (days-remaining-at-balance),
+    `close_all_forwards`; `renew` raises `NotImplementedError` (no lease).
+- **`marina/seas/forwarding.py`** — injectable `Forwarder`/`Forward` SSH
+  local-forward abstraction (`SubprocessForwarder` spawns a detached
+  `ssh -N -L` child with `accept-new`/`ExitOnForwardFailure`/keepalive), plus
+  `pick_free_port()`. Mirrors the `Runner` pattern so tests never spawn ssh.
+  - API key resolved from an env var (`api_key_env`, default `VAST_API_KEY`),
+    never in TOML plaintext nor across the MCP boundary.
+  - **Self-contained SSH identity** (replaces the old skypilot relay that held
+    keys for all providers): a local `ssh_key_path`/`ssh_pubkey_path` is owned
+    by Marina; `create()` runs `vastai attach ssh <id> <pubkey>` so the rented
+    box trusts Marina's key directly. Skipped when no local key is configured
+    (instances then inherit account-attached keys). `pubkey_loader` injectable
+    for tests.
+- **Factory**: `build_sea(..., "vast_sea", ...)` constructs a `VastSea`
+  (`api_key_env`, `ssh_user`/`ssh_key_path`/`container_grpc_port`,
+  `ready_timeout_s`/`ssh_ready_timeout_s`/`poll_interval_s`).
+- **Tests** (50): service-level subprocess dispatch via `FakeRunner` +
+  `FakeForwarder` (search/recommend/create/poll/ssh-retry/tunnel/list/destroy/
+  stop+start/status/cost) + pure-logic unit tests (FP64 table, offer parsing,
+  query building, label round-trip, forwarding argv, factory wiring).
+
 ## [Unreleased] — filesystem staging API (2026-06-02)
 
 First vertical slice of the file-command layer: staging scripts and input

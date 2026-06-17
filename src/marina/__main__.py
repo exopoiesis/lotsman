@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from marina.config import load_config
+from marina.dotenv import load_dotenv
 from marina.hub import Hub
 from marina.mcp_server import make_mcp_server
 from marina.seas.factory import build_sea
@@ -12,6 +13,14 @@ from marina.seas.factory import build_sea
 
 def cmd_serve(args: argparse.Namespace) -> int:
     config_path = Path(args.config) if args.config else None
+    loaded = load_dotenv(config_path)
+    if loaded:
+        print(
+            f"Marina: loaded {len(loaded)} var(s) from .env: "
+            f"{', '.join(sorted(loaded))}",
+            file=sys.stderr,
+            flush=True,
+        )
     cfg = load_config(config_path)
 
     hub = Hub()

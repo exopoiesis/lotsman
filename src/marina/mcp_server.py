@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import asdict
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from marina.hub import Hub
+from marina.seas.presets import PRESETS
 
 
 def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
@@ -20,9 +22,59 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
         return hub.sea_list()
 
     @mcp.tool()
-    def sea_search(sea: str, limit: int = 20) -> list[dict[str, Any]]:
-        """List offers in the given sea (free-form filters TBD)."""
-        return [_offer_to_dict(o) for o in hub.sea_search(sea, limit=limit)]
+    def sea_search(
+        sea: str,
+        limit: int = 20,
+        gpu_name: str = "",
+        vram_gb: int = 0,
+        cpu_name: str = "",
+        min_cuda: float = 0.0,
+        min_reliability: float = 0.0,
+        max_dph: float = 0.0,
+        verified: bool = True,
+        order: str = "",
+        format: str = "table",
+    ) -> str | list[dict[str, Any]]:
+        """List offers in a sea, with optional filters and sort.
+
+        Returns a ready-to-display aligned text table by default (fixed columns:
+        ID, GPU, VRAM, CUDA, CPU, cores, RAM, Disk, zGPU, zCPU, DLP/$, vbw, PCIe,
+        $/hr, geo; `cores` = ours/total). ``format="json"`` for raw per-offer dicts.
+
+        - ``gpu_name``: family-aware ("A100" matches A100 PCIE + SXM4) or an
+          exact Vast model ("A100 SXM4").
+        - ``vram_gb``: keep only offers with this exact per-GPU VRAM (e.g. 40).
+        - ``cpu_name``: family-aware ("trpro" matches AMD Threadripper PRO
+          7/5/3 WX) or a literal substring of the host CPU ("5955WX",
+          "EPYC 7763"); matched case-insensitively.
+        - ``order``: sort key; prefix ``-`` for descending. Keys include
+          ``cpu_ghz``, ``dph``/``price``, ``vram_gb``, ``cpu_cores``,
+          ``reliability``, ``dlperf``, ``dlperf_per_dollar`` (perf-per-$),
+          ``zcpu`` (synthetic CP2K score), ``zgpu`` (synthetic QE/FP64 score),
+          ``gpu_mem_bw``, ``pcie_bw`` (e.g. ``-zgpu`` = best GPU-DFT host first).
+        - ``min_cuda``: keep only hosts whose ``cuda_max_good`` (highest CUDA
+          toolkit they run well) is >= this — match it to the image you deploy.
+        - ``min_reliability`` / ``max_dph`` / ``verified``: marketplace filters.
+        """
+        filters: dict[str, object] = {"verified": verified}
+        if gpu_name:
+            filters["gpu_name"] = gpu_name
+        if vram_gb:
+            filters["vram_gb"] = vram_gb
+        if cpu_name:
+            filters["cpu_name"] = cpu_name
+        if min_cuda > 0:
+            filters["min_cuda"] = min_cuda
+        if min_reliability > 0:
+            filters["min_reliability"] = min_reliability
+        if max_dph > 0:
+            filters["max_dph"] = max_dph
+        if order:
+            filters["order"] = order
+        offers = hub.sea_search(sea, filters=filters, limit=limit)
+        if format == "json":
+            return [_offer_to_dict(o) for o in offers]
+        return _format_offers_table(offers)
 
     @mcp.tool()
     def sea_recommend(
@@ -30,15 +82,29 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
         workload: str,
         budget_per_hour: float = 0.0,
         min_hours: int = 0,
-    ) -> list[dict[str, Any]]:
-        """Top offers for a workload preset (e.g. dft_paper_grade, mlip)."""
+        rank_by: str = "",
+        format: str = "table",
+    ) -> str | list[dict[str, Any]]:
+        """Top offers for a workload preset (e.g. dft_paper_grade, mlip).
+
+        Applies the preset's hard gate (FP64 / VRAM / GHz / cores / RAM / disk /
+        reliability — our DEADLY_MISTAKES bar) then ranks the survivors by host
+        fitness: ``zgpu`` for GPU-FP64 DFT, ``dlperf`` for MLIP (FP32), per the
+        preset. Override with ``rank_by`` (``zgpu`` / ``zcpu`` / ``dlperf`` /
+        ``dlperf_per_dollar`` / ``price``) — e.g. ``zcpu`` for a CP2K run.
+        Ready-to-display table by default; ``format="json"`` for raw dicts.
+        """
         offers = hub.sea_recommend(
             sea,
             workload=workload,
             budget_per_hour=budget_per_hour if budget_per_hour > 0 else None,
             min_hours=min_hours if min_hours > 0 else None,
         )
-        return [_offer_to_dict(o) for o in offers]
+        key = rank_by or PRESETS[workload].rank_by
+        offers = _rank_offers(offers, key)
+        if format == "json":
+            return [_offer_to_dict(o) for o in offers]
+        return _format_offers_table(offers)
 
     @mcp.tool()
     def sea_status(sea: str) -> dict[str, Any]:
@@ -364,6 +430,76 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
 # ---- helpers ----
 
 
+# Ranking keys for sea_recommend (Offer attribute, descending = better) — plus
+# "price" which sorts ascending. Used to order offers that pass a preset gate.
+_RANK_ATTR = {
+    "zgpu": "zgpu", "zcpu": "zcpu", "dlperf": "dlperf",
+    "dlperf_per_dollar": "dlperf_per_dollar", "dlpd": "dlperf_per_dollar",
+}
+
+
+def _rank_offers(offers: list[Any], key: str) -> list[Any]:
+    """Sort offers by a fitness key (descending), or by price ascending."""
+    if key in ("price", "dph", "price_per_hour"):
+        return sorted(offers, key=lambda o: o.price_per_hour)
+    attr = _RANK_ATTR.get(key, "zgpu")
+    return sorted(offers, key=lambda o: getattr(o, attr), reverse=True)
+
+
+def _short_cpu(name: str) -> str:
+    """Compact CPU label for the results table (drop brand noise + core count)."""
+    s = name or ""
+    for junk in ("(R)", "®", "™", "Processor", "CPU"):
+        s = s.replace(junk, "")
+    s = s.replace("Threadripper PRO", "TR PRO").replace("Threadripper", "TR")
+    s = s.replace("AMD Ryzen ", "").replace("AMD ", "")
+    s = re.sub(r"\s*\d+[- ]Cores?\b", "", s)  # drop "64-Core" / "16-Cores"
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:22]
+
+
+# Fixed result columns (label, right-aligned?, value-fn). ID always first so the
+# user can name a contract to buy. Rendered server-side to save agent tokens.
+_TABLE_COLUMNS: tuple[tuple[str, bool, Any], ...] = (
+    ("ID", False, lambda o: o.offer_id),
+    ("GPU", False, lambda o: f"{o.gpu_count}x{o.gpu_model}"),
+    ("VRAM", True, lambda o: f"{o.vram_gb}G"),
+    ("CUDA", True, lambda o: f"{o.cuda_max_good:.1f}"),
+    ("CPU", False, lambda o: _short_cpu(o.cpu_name)),
+    ("cores", True, lambda o: f"{o.cpu_cores}/{o.cpu_cores_total}"),
+    ("RAM", True, lambda o: f"{o.ram_gb}G"),
+    ("Disk", True, lambda o: f"{o.disk_gb}G"),
+    ("zGPU", True, lambda o: str(o.zgpu)),
+    ("zCPU", True, lambda o: str(o.zcpu)),
+    ("DLP/$", True, lambda o: f"{o.dlperf_per_dollar:.0f}"),
+    ("vbw", True, lambda o: f"{o.gpu_mem_bw_gbs:.0f}"),
+    ("PCIe", True, lambda o: f"{o.pcie_bw_gbs:.1f}"),
+    ("$/hr", True, lambda o: f"{o.price_per_hour:.2f}"),
+    ("geo", False, lambda o: (o.geolocation or "")[:20]),
+)
+
+
+def _format_offers_table(offers: list[Any]) -> str:
+    """Render offers as a fixed-column aligned text table (ready to display)."""
+    if not offers:
+        return "(no offers)"
+    headers = [c[0] for c in _TABLE_COLUMNS]
+    rows = [[str(fn(o)) for _, _, fn in _TABLE_COLUMNS] for o in offers]
+    widths = [
+        max(len(headers[i]), *(len(r[i]) for r in rows))
+        for i in range(len(headers))
+    ]
+
+    def fmt(cells: list[str]) -> str:
+        out = []
+        for i, (_, right, _) in enumerate(_TABLE_COLUMNS):
+            out.append(cells[i].rjust(widths[i]) if right else cells[i].ljust(widths[i]))
+        return " | ".join(out)
+
+    sep = "-+-".join("-" * w for w in widths)
+    return "\n".join([fmt(headers), sep, *(fmt(r) for r in rows)])
+
+
 def _offer_to_dict(o: Any) -> dict[str, Any]:
     return {
         "sea": o.sea,
@@ -372,13 +508,21 @@ def _offer_to_dict(o: Any) -> dict[str, Any]:
         "gpu_count": o.gpu_count,
         "vram_gb": o.vram_gb,
         "fp64_native": o.fp64_native,
+        "cpu_name": o.cpu_name,
         "cpu_ghz": o.cpu_ghz,
-        "cpu_cores": o.cpu_cores,
+        "cpu_cores": o.cpu_cores,            # cores rented to us
+        "cpu_cores_total": o.cpu_cores_total,  # total cores on the host
         "ram_gb": o.ram_gb,
         "disk_gb": o.disk_gb,
         "price_per_hour": o.price_per_hour,
-        "reliability": o.reliability,
         "inet_down_mbps": o.inet_down_mbps,
+        "geolocation": o.geolocation,
+        "dlperf": o.dlperf,                    # raw DL perf score
+        "dlperf_per_dollar": o.dlperf_per_dollar,  # perf per $/hr (bang-for-buck)
+        "gpu_mem_bw_gbs": o.gpu_mem_bw_gbs,    # measured VRAM bandwidth
+        "pcie_bw_gbs": o.pcie_bw_gbs,          # measured host<->GPU PCIe bandwidth
+        "zcpu": o.zcpu,                        # synthetic CPU-DFT (CP2K) score
+        "zgpu": o.zgpu,                        # synthetic GPU-DFT (QE) score
     }
 
 

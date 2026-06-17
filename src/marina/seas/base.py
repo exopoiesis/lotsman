@@ -19,12 +19,22 @@ class Offer:
     vram_gb: int
     fp64_native: bool
     cpu_ghz: float
-    cpu_cores: int
+    cpu_cores: int  # cores actually rented to us (effective share of the host)
     ram_gb: int
     disk_gb: int
     price_per_hour: float
     reliability: float | None = None
     inet_down_mbps: float | None = None
+    cpu_name: str = ""
+    cpu_cores_total: int = 0  # total cores on the physical host (0 = unknown)
+    geolocation: str = ""
+    dlperf: float = 0.0  # Vast deep-learning perf score (higher = faster)
+    dlperf_per_dollar: float = 0.0  # dlperf per $/hr — bang-for-buck
+    gpu_mem_bw_gbs: float = 0.0  # measured VRAM bandwidth, GB/s (per GPU)
+    pcie_bw_gbs: float = 0.0  # measured host<->GPU PCIe bandwidth, GB/s
+    cuda_max_good: float = 0.0  # highest CUDA toolkit the host runs well
+    zcpu: int = 0  # synthetic CPU-DFT (CP2K) score, ~100 = full TR PRO 5955WX
+    zgpu: int = 0  # synthetic GPU-DFT (QE) score, ~100 = one A100 PCIe
     extras: dict[str, object] = field(default_factory=dict)
 
 

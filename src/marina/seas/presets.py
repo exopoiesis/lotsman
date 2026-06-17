@@ -24,6 +24,9 @@ class WorkloadPreset:
     min_ram_gb: int = 0
     min_disk_gb: int = 0
     min_reliability: float | None = None
+    # How to rank the offers that pass the gate. GPU-FP64 DFT -> "zgpu";
+    # CPU DFT (CP2K) -> "zcpu"; MLIP (FP32) -> "dlperf"; or "price".
+    rank_by: str = "zgpu"
 
 
 PRESETS: dict[str, WorkloadPreset] = {
@@ -61,6 +64,7 @@ PRESETS: dict[str, WorkloadPreset] = {
         min_cpu_cores=4,
         min_ram_gb=12,
         min_disk_gb=20,
+        rank_by="dlperf",  # MLIP is FP32 — FP64-based zgpu would mis-rank
     ),
     "aimd_long": WorkloadPreset(
         name="aimd_long",

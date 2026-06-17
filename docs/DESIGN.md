@@ -179,7 +179,7 @@ Owned hardware (DockerSea) defaults `reliability=1.0` (owner-attested) — admin
 | sea type | impl | поддерживает |
 |---|---|---|
 | `docker_sea` | `marina/seas/docker_sea.py` | `docker --context <ctx>` для local или remote Docker hosts (gomer, loki, default). One container = one host. Cost = $0/hr (owned) |
-| `vast_sea` | `marina/seas/vast_sea.py` *(M2-B, pending)* | Vast.ai REST API — search/create/destroy/balance |
+| `vast_sea` | `marina/seas/vast_sea.py` ✅ | Vast.ai CLI (`vastai --raw`) — search/recommend/create/destroy/stop/start/balance. `create()` waits for sshd then opens an `ssh -N -L` tunnel to the in-container gRPC port (`marina/seas/forwarding.py`); gRPC target = `127.0.0.1:<local>` |
 | `runpod_sea` | *(future)* | RunPod / Lambda / Crusoe — provider plug-ins |
 
 Пример конфига `~/.lotsman/marina.toml`:
@@ -210,9 +210,21 @@ cpu_cores = 8
 ram_gb = 16
 disk_gb = 200
 
-# (M2-B) [seas.vast]
-# type = "vast_sea"
-# api_key_env = "VASTAI_API_KEY"
+[seas.vast]
+type = "vast_sea"
+api_key_env = "VAST_API_KEY"        # key read from env, never stored in TOML
+ssh_key_path = "~/.ssh/id_vast"     # LOCAL private key Marina owns (login + -L tunnel)
+# ssh_pubkey_path = "~/.ssh/id_vast.pub"  # default: <ssh_key_path>.pub; attached to each instance
+# ssh_user = "root"                 # default
+# container_grpc_port = 50051       # where `lotsman serve` listens in the image
+# ready_timeout_s = 1800            # how long create() waits for `running`
+# ssh_ready_timeout_s = 180         # how long it then waits for sshd
+# poll_interval_s = 10              # status/ssh poll cadence
+
+# Marina owns its SSH identity LOCALLY and replaces the old skypilot relay:
+# create() runs `vastai attach ssh <id> <pubkey>` so the rented box trusts
+# Marina's key directly — skypilot is no longer in the chain. If ssh_key_path
+# is omitted, instances inherit whatever keys are attached to the Vast account.
 ```
 
 **Built-in presets** (кодируют DEADLY_MISTAKES + PROJECT_STATE опыт):
@@ -231,6 +243,9 @@ disk_gb = 200
 - exclude L40/A40/RTX-6000-Ada если workload=DFT (нет нативного FP64, 30-60× медленнее)
 
 Override: `with_recommended_filters=false` — raw поиск без наших правил.
+
+> **Search filters, GPU/CPU family matching, and the zCPU/zGPU host-fitness
+> scores live in [`HOST_SCORING.md`](HOST_SCORING.md).**
 
 #### Vast.ai-specific lifecycle (M2-B, реализуется через `VastSea`)
 
@@ -475,7 +490,7 @@ impossible-to-skip.
 - **M2-Harvest — guarded harvest/download API DONE 2026-06-02.** gRPC `HarvestInventory / Harvest / Download / DownloadGlob`, Marina Hub proxies, MCP tools `harvest_inventory / harvest / download / download_glob`. `harvest` creates tar/tar.gz archives in job-dir and returns manifest + checksum; MCP content transfer is opt-in via `include_content=true`. `download_glob` has 5 GB hard guard unless `confirm_size_gb` covers matched total. 210 tests total; ruff, mypy, pytest clean.
 - **M2-B-Tier2 (deferred — upstream blocker).** Native MCP Tasks API: `mcp` Python SDK 1.26.0 ships Task *types* but neither `FastMCP` nor lowlevel `Server` surfaces task **handlers**. Revisit when SDK exposes them.
 - **M2-C — `claude/channel` push prototype (deferred — upstream blocker).** Undocumented in standard MCP; Claude Code-specific capability mentioned in this design doc with explicit caveat. Standard `LoggingMessageNotification` flows only within active sessions, doesn't wake a sleeping agent. In the meantime, Tier 1 polling already meets the "save my night" goal — real-time push would just reduce wake latency from ~30 min to seconds.
-- **M2-A-Vast — `VastSea` (deferred per project decision).** "Сначала всё через гомер" — until owned-hardware flow is fully proven, no Vast.ai burn.
+- **M2-A-Vast — `VastSea` DONE 2026-06-17.** Full Vast.ai marketplace backend for the `Sea` abstraction: filtered search (family-aware GPU/CPU, `vram_gb`, `min_cuda`, `order`), two synthetic host-fitness scores `zGPU` (QE/FP64) and `zCPU` (CP2K, roofline + 8-core knee), server-rendered result table, workload `recommend` ranked by fitness, and a verified `host_create → host_list → host_destroy` lifecycle (SSH-tunnel to in-container gRPC, short instance label). Hardened against hangs (per-call timeout + temp-file output + fail-fast on doomed image pull) and against price-biased perf sorts (whole-market fetch). Key via `.env` (`marina/dotenv.py`); `vastai_bin` pin for MCP-child PATH. 285 tests. Details: `docs/HOST_SCORING.md`.
 - **M3** — `prepare_input` / `validate_input` / `lessons_for` для QE и CP2K + **external webhooks** + `cost_history` + `host_status / kill_all_on_host / harvest_all_done`. Marina становится самодостаточной для всего daily compute workflow (search → create → run → monitor → harvest → destroy).
 - **M4** — третий tool (ABACUS или GPAW) + опциональный SSH-multiplex для Marina↔Lotsman (snappier) + RunPod/Lambda/Crusoe seas.
 - **M5** — HTTP/SSE transport между Marina↔Lotsman (опция помимо ssh stdio).
