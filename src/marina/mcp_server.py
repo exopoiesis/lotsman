@@ -24,7 +24,7 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
     @mcp.tool()
     def sea_search(
         sea: str,
-        limit: int = 20,
+        limit: int = 15,
         gpu_name: str = "",
         vram_gb: int = 0,
         cpu_name: str = "",
@@ -33,13 +33,21 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
         max_dph: float = 0.0,
         verified: bool = True,
         order: str = "",
+        host_type: str = "any",
         format: str = "table",
     ) -> str | list[dict[str, Any]]:
         """List offers in a sea, with optional filters and sort.
 
-        Returns a ready-to-display aligned text table by default (fixed columns:
-        ID, GPU, VRAM, CUDA, CPU, cores, RAM, Disk, zGPU, zCPU, DLP/$, vbw, PCIe,
-        $/hr, geo; `cores` = ours/total). ``format="json"`` for raw per-offer dicts.
+        Returns a ready-to-display aligned text table by default (top ``limit``
+        offers, default 15 — a wide shortlist to choose from). RELAY IT VERBATIM:
+        the table is rendered server-side precisely so the agent need not re-read,
+        re-rank, or hand-filter the rows (that just burns tokens). Shape the
+        result with the params below (``gpu_name``/``vram_gb``/``order``/
+        ``host_type``/``max_dph``/``limit``), not with post-hoc filtering.
+
+        Fixed columns: ID, GPU, VRAM, CUDA, CPU, cores, RAM, Disk, zGPU, zCPU,
+        DLP/$, vbw, PCIe, type, $/hr, geo; `cores` = ours/total; `type` = OD
+        (on-demand) / spot (interruptible). ``format="json"`` for raw dicts.
 
         - ``gpu_name``: family-aware ("A100" matches A100 PCIE + SXM4) or an
           exact Vast model ("A100 SXM4").
@@ -55,6 +63,10 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
         - ``min_cuda``: keep only hosts whose ``cuda_max_good`` (highest CUDA
           toolkit they run well) is >= this — match it to the image you deploy.
         - ``min_reliability`` / ``max_dph`` / ``verified``: marketplace filters.
+        - ``host_type``: ``"any"`` (**default** — both on-demand and spot,
+          merged, so nothing is hidden), ``"on-demand"`` (runs until destroyed),
+          or ``"spot"`` (interruptible/bid; ``$/hr`` shown = min_bid, the spot
+          floor; can be preempted). Pass ``"on-demand"`` explicitly for OD-only.
         """
         filters: dict[str, object] = {"verified": verified}
         if gpu_name:
@@ -71,10 +83,66 @@ def make_mcp_server(hub: Hub, name: str = "Marina") -> FastMCP:
             filters["max_dph"] = max_dph
         if order:
             filters["order"] = order
+        if host_type:
+            filters["host_type"] = host_type
         offers = hub.sea_search(sea, filters=filters, limit=limit)
         if format == "json":
             return [_offer_to_dict(o) for o in offers]
         return _format_offers_table(offers)
+
+    @mcp.tool()
+    def seas_search(
+        limit_per_sea: int = 7,
+        gpu_name: str = "",
+        vram_gb: int = 0,
+        cpu_name: str = "",
+        min_cuda: float = 0.0,
+        min_reliability: float = 0.0,
+        max_dph: float = 0.0,
+        verified: bool = True,
+        order: str = "",
+        host_type: str = "any",
+        format: str = "table",
+    ) -> str | list[dict[str, Any]]:
+        """Search ALL marketplace seas at once with one filter (no `sea` arg).
+
+        The cross-sea view: queries every marketplace sea (vast / verda / clore —
+        not owned docker hosts), takes the top ``limit_per_sea`` (default 7) from
+        each, merges, and sorts the whole set as a single sea would (by ``order``,
+        else cheapest first). The result table prepends a **`sea`** column so each
+        row's provider is clear. Same filters/columns as ``sea_search``, including
+        ``host_type`` which defaults to ``"any"`` (both on-demand and spot, so
+        nothing is hidden); pass ``"on-demand"`` or ``"spot"`` to narrow. Relay
+        the table verbatim. Any sea that fails (no creds / unreachable) is reported
+        in a trailing note rather than silently dropped. ``format="json"`` for raw
+        dicts (each includes its ``sea``).
+        """
+        filters: dict[str, object] = {"verified": verified}
+        if gpu_name:
+            filters["gpu_name"] = gpu_name
+        if vram_gb:
+            filters["vram_gb"] = vram_gb
+        if cpu_name:
+            filters["cpu_name"] = cpu_name
+        if min_cuda > 0:
+            filters["min_cuda"] = min_cuda
+        if min_reliability > 0:
+            filters["min_reliability"] = min_reliability
+        if max_dph > 0:
+            filters["max_dph"] = max_dph
+        if order:
+            filters["order"] = order
+        if host_type:
+            filters["host_type"] = host_type
+        offers, errors = hub.seas_search(filters=filters, limit_per_sea=limit_per_sea)
+        offers = _sort_merged(offers, order)
+        if format == "json":
+            return [_offer_to_dict(o) for o in offers]
+        table = _format_offers_table(offers, with_sea=True)
+        if errors:
+            note = "; ".join(f"{s}: {e}" for s, e in errors.items())
+            table += f"\n\n(seas skipped — {note})"
+        return table
 
     @mcp.tool()
     def sea_recommend(
@@ -474,17 +542,28 @@ _TABLE_COLUMNS: tuple[tuple[str, bool, Any], ...] = (
     ("DLP/$", True, lambda o: f"{o.dlperf_per_dollar:.0f}"),
     ("vbw", True, lambda o: f"{o.gpu_mem_bw_gbs:.0f}"),
     ("PCIe", True, lambda o: f"{o.pcie_bw_gbs:.1f}"),
+    # Host type, third from the right (before price): OD = on-demand (runs until
+    # destroyed), spot = interruptible/bid (preemptible; $/hr = min_bid floor).
+    ("type", True, lambda o: "spot" if o.host_type == "interruptible" else "OD"),
     ("$/hr", True, lambda o: f"{o.price_per_hour:.2f}"),
     ("geo", False, lambda o: (o.geolocation or "")[:20]),
 )
 
 
-def _format_offers_table(offers: list[Any]) -> str:
-    """Render offers as a fixed-column aligned text table (ready to display)."""
+# Leading column for the cross-sea (seas_search) view: which sea an offer is from.
+_SEA_COLUMN: tuple[str, bool, Any] = ("sea", False, lambda o: o.sea)
+
+
+def _format_offers_table(offers: list[Any], with_sea: bool = False) -> str:
+    """Render offers as a fixed-column aligned text table (ready to display).
+
+    ``with_sea`` prepends a ``sea`` column (used by the cross-sea seas_search).
+    """
     if not offers:
         return "(no offers)"
-    headers = [c[0] for c in _TABLE_COLUMNS]
-    rows = [[str(fn(o)) for _, _, fn in _TABLE_COLUMNS] for o in offers]
+    columns = ((_SEA_COLUMN, *_TABLE_COLUMNS) if with_sea else _TABLE_COLUMNS)
+    headers = [c[0] for c in columns]
+    rows = [[str(fn(o)) for _, _, fn in columns] for o in offers]
     widths = [
         max(len(headers[i]), *(len(r[i]) for r in rows))
         for i in range(len(headers))
@@ -492,12 +571,47 @@ def _format_offers_table(offers: list[Any]) -> str:
 
     def fmt(cells: list[str]) -> str:
         out = []
-        for i, (_, right, _) in enumerate(_TABLE_COLUMNS):
+        for i, (_, right, _) in enumerate(columns):
             out.append(cells[i].rjust(widths[i]) if right else cells[i].ljust(widths[i]))
         return " | ".join(out)
 
     sep = "-+-".join("-" * w for w in widths)
     return "\n".join([fmt(headers), sep, *(fmt(r) for r in rows)])
+
+
+# Sort keys for the merged cross-sea result (Offer attributes common to all seas).
+_MERGED_SORT_KEYS = {
+    "price": "price_per_hour", "dph": "price_per_hour",
+    "price_per_hour": "price_per_hour",
+    "cpu_ghz": "cpu_ghz", "ghz": "cpu_ghz",
+    "vram": "vram_gb", "vram_gb": "vram_gb",
+    "cores": "cpu_cores", "cpu_cores": "cpu_cores",
+    "ram": "ram_gb", "ram_gb": "ram_gb",
+    "disk": "disk_gb", "disk_gb": "disk_gb",
+    "reliability": "reliability",
+    "dlperf": "dlperf",
+    "dlpd": "dlperf_per_dollar", "dlperf_per_dollar": "dlperf_per_dollar",
+    "zcpu": "zcpu", "zgpu": "zgpu",
+    "gpu_mem_bw": "gpu_mem_bw_gbs", "pcie_bw": "pcie_bw_gbs",
+}
+
+
+def _sort_merged(offers: list[Any], order: str) -> list[Any]:
+    """Sort merged cross-sea offers; '' = cheapest first, '-' prefix = descending."""
+    if not order:
+        return sorted(offers, key=lambda o: o.price_per_hour)
+    desc = order.startswith("-")
+    attr = _MERGED_SORT_KEYS.get((order[1:] if desc else order).lower())
+    if attr is None:
+        raise ValueError(
+            f"unknown sort key {order!r}; known: {sorted(set(_MERGED_SORT_KEYS))}"
+        )
+
+    def keyfn(o: Any) -> float:
+        val = getattr(o, attr, None)
+        return float(val) if val is not None else float("-inf")
+
+    return sorted(offers, key=keyfn, reverse=desc)
 
 
 def _offer_to_dict(o: Any) -> dict[str, Any]:
@@ -515,6 +629,7 @@ def _offer_to_dict(o: Any) -> dict[str, Any]:
         "ram_gb": o.ram_gb,
         "disk_gb": o.disk_gb,
         "price_per_hour": o.price_per_hour,
+        "host_type": o.host_type,  # "on-demand" | "interruptible" (spot)
         "inet_down_mbps": o.inet_down_mbps,
         "geolocation": o.geolocation,
         "dlperf": o.dlperf,                    # raw DL perf score

@@ -113,7 +113,7 @@ Marina:     ssh -L /tmp/lotsman-<host>.sock:/var/run/lotsman/<container>.sock ro
 
 Persistent SSH с auto-reconnect. Heartbeat 30s. Fallback на TCP port forward если UDS forwarding finicky (старый OpenSSH).
 
-**Marina ↔ Vast.ai = HTTPS REST** — через `vastai-python` или прямые requests'ы. API ключ только в Marina config.
+**Marina ↔ marketplace = HTTPS REST.** Vast.ai через `vastai` CLI (`--raw`); Verda и Clore через прямой REST (общий `http_transport.py`, stdlib `urllib` — Verda OAuth2, Clore single-token `auth` + browser UA). Секреты только в env / `.env` процесса Marina, никогда в TOML.
 
 ### Lotsman без MCP face — single-host debug fallback
 
@@ -141,7 +141,8 @@ API делится на **Marina-only** (sea registry, host fleet ops) и **per-
 | Команда | Параметры | Назначение |
 |---|---|---|
 | `sea_list` | — | имена всех зарегистрированных морей |
-| `sea_search` | `sea`, `filters?`, `limit?=20` | offers моря (gomer = один static, vast = много динамически) |
+| `sea_search` | `sea`, `gpu_name?`, `vram_gb?`, `cpu_name?`, `order?`, `host_type?`, `max_dph?`, `limit?=15` | offers моря (gomer = один static, vast/verda/clore = много динамически). `host_type` = `any` (**MCP-дефолт**: OD+spot, мёрж — ничего не скрыто) \| `on-demand` \| `spot` (`$/hr` = спот-флор). Server-rendered таблица; колонка `type` (OD/spot) 3-я справа перед `$/hr` |
+| `seas_search` | `limit_per_sea?=7`, + те же фильтры что `sea_search` (БЕЗ `sea`) | cross-sea uber-поиск: один фильтр по ВСЕМ marketplace-морям (`is_marketplace`: vast/verda/clore, не owned docker), топ-N с каждого, мёрж + глобальная сортировка, ведущая колонка `sea`. Упавшее море (нет creds / unreachable) — в trailing note, не молча |
 | `sea_recommend` | `sea`, `workload`, `budget_per_hour?`, `min_hours?` | top offers подходящие под `dft_paper_grade\|dft_smoke\|mlip\|aimd_long` |
 | `sea_status` | `sea` | reachable? балансы / burn / детали транспорта |
 | `cost_summary` | `sea?` | total $/hr + per-host breakdown + balance + burn 24h. Без `sea` — aggregated по всем |
@@ -180,6 +181,8 @@ Owned hardware (DockerSea) defaults `reliability=1.0` (owner-attested) — admin
 |---|---|---|
 | `docker_sea` | `marina/seas/docker_sea.py` | `docker --context <ctx>` для local или remote Docker hosts (gomer, loki, default). One container = one host. Cost = $0/hr (owned) |
 | `vast_sea` | `marina/seas/vast_sea.py` ✅ | Vast.ai CLI (`vastai --raw`) — search/recommend/create/destroy/stop/start/balance. `create()` waits for sshd then opens an `ssh -N -L` tunnel to the in-container gRPC port (`marina/seas/forwarding.py`); gRPC target = `127.0.0.1:<local>` |
+| `verda_sea` | `marina/seas/verda_sea.py` ✅ | Verda Cloud (ex-DataCrunch) REST API — backup marketplace alongside Vast (EU regions, native spot). No CLI: talks HTTP over an injectable transport (`http_transport.py`; default stdlib `urllib`, no new dep), OAuth2 client-credentials token managed internally. Wired for `sea_search` + `host_create` (+ status/list/destroy); `recommend`/`stop`/`start`/`renew` raise NotImplementedError. `offer_id` = `<instance_type>@<region>[#spot]` |
+| `clore_sea` | `marina/seas/clore_sea.py` ✅ | Clore.ai REST API — crypto-settled (BTC / CLORE / USD-stable) backup marketplace. Same transport seam; single `auth` token + browser User-Agent (Cloudflare blocks default UAs). One `/marketplace` call returns both on-demand & spot prices; consumer-GPU heavy (great for MLIP, thin on A100/H100). Wired for `sea_search` + `host_create` (+ status/list/destroy). `offer_id` = `<server_id>[#spot]` |
 | `runpod_sea` | *(future)* | RunPod / Lambda / Crusoe — provider plug-ins |
 
 Пример конфига `~/.lotsman/marina.toml`:
@@ -225,6 +228,23 @@ ssh_key_path = "~/.ssh/id_vast"     # LOCAL private key Marina owns (login + -L 
 # create() runs `vastai attach ssh <id> <pubkey>` so the rented box trusts
 # Marina's key directly — skypilot is no longer in the chain. If ssh_key_path
 # is omitted, instances inherit whatever keys are attached to the Vast account.
+
+[seas.verda]                          # backup marketplace alongside Vast
+type = "verda_sea"
+# client_id_env = "VERDA_CLIENT_ID"        # OAuth2 creds read from env / .env,
+# client_secret_env = "VERDA_CLIENT_SECRET"#   named here, never stored in TOML
+default_region = "FIN-03"             # used when an offer_id omits a region
+ssh_pubkey_path = "~/.ssh/id_vast.pub"  # required for host_create (reuse Vast key)
+# default_image = "ubuntu-24.04-cuda-12.8-open-docker"
+# default_disk_gb = 100
+# base_url = "https://api.verda.com/v1"
+
+[seas.clore]                          # crypto-settled backup marketplace
+type = "clore_sea"
+# api_key_env = "CLORE_API_KEY"            # token read from env / .env, not TOML
+ssh_pubkey_path = "~/.ssh/id_vast.pub"
+# default_currency = "bitcoin"             # or "CLORE-Blockchain" (token discount)
+# default_image = "cloreai/ubuntu22.04-cuda-12.4"
 ```
 
 **Built-in presets** (кодируют DEADLY_MISTAKES + PROJECT_STATE опыт):
@@ -491,6 +511,7 @@ impossible-to-skip.
 - **M2-B-Tier2 (deferred — upstream blocker).** Native MCP Tasks API: `mcp` Python SDK 1.26.0 ships Task *types* but neither `FastMCP` nor lowlevel `Server` surfaces task **handlers**. Revisit when SDK exposes them.
 - **M2-C — `claude/channel` push prototype (deferred — upstream blocker).** Undocumented in standard MCP; Claude Code-specific capability mentioned in this design doc with explicit caveat. Standard `LoggingMessageNotification` flows only within active sessions, doesn't wake a sleeping agent. In the meantime, Tier 1 polling already meets the "save my night" goal — real-time push would just reduce wake latency from ~30 min to seconds.
 - **M2-A-Vast — `VastSea` DONE 2026-06-17.** Full Vast.ai marketplace backend for the `Sea` abstraction: filtered search (family-aware GPU/CPU, `vram_gb`, `min_cuda`, `order`), two synthetic host-fitness scores `zGPU` (QE/FP64) and `zCPU` (CP2K, roofline + 8-core knee), server-rendered result table, workload `recommend` ranked by fitness, and a verified `host_create → host_list → host_destroy` lifecycle (SSH-tunnel to in-container gRPC, short instance label). Hardened against hangs (per-call timeout + temp-file output + fail-fast on doomed image pull) and against price-biased perf sorts (whole-market fetch). Key via `.env` (`marina/dotenv.py`); `vastai_bin` pin for MCP-child PATH. 285 tests. Details: `docs/HOST_SCORING.md`.
+- **sea_search `host_type` + `VerdaSea` + `CloreSea` DONE 2026-06-19.** `sea_search`/`seas_search` gain a `host_type` dimension — `any` (the MCP default: on-demand + spot merged, nothing hidden) / `on-demand` / `spot` (interruptible; Vast `--type bid`, `$/hr` = `min_bid` floor) — plus a `type` column (OD/spot) third from the right and a top-15 default. Two REST-backed backup marketplaces share a tiny injectable HTTP seam (`marina/seas/http_transport.py`, default stdlib `urllib` — no new dep; secrets from env/`.env` like Vast): **`VerdaSea`** (Verda Cloud, OAuth2) and **`CloreSea`** (Clore.ai, crypto-settled, single `auth` token + browser UA for Cloudflare; consumer-GPU heavy). Both wired for `sea_search` + `host_create`. New datasheet helper `perf_score.gpu_mem_bandwidth()` for catalogs without measured bandwidth. Both validated against their live APIs. A cross-sea **`seas_search`** runs one filter across all marketplace seas (top-N each, merged + sorted, leading `sea` column), validated live across vast+verda+clore. ~316 tests.
 - **M3** — `prepare_input` / `validate_input` / `lessons_for` для QE и CP2K + **external webhooks** + `cost_history` + `host_status / kill_all_on_host / harvest_all_done`. Marina становится самодостаточной для всего daily compute workflow (search → create → run → monitor → harvest → destroy).
 - **M4** — третий tool (ABACUS или GPAW) + опциональный SSH-multiplex для Marina↔Lotsman (snappier) + RunPod/Lambda/Crusoe seas.
 - **M5** — HTTP/SSE transport между Marina↔Lotsman (опция помимо ssh stdio).
@@ -533,8 +554,13 @@ lotsman/
 │   │       ├── registry.py      module-level Sea registry (test helper)
 │   │       ├── factory.py       build_sea(name, type, raw) → Sea
 │   │       ├── runner.py        injectable subprocess runner (testability)
+│   │       ├── perf_score.py    zCPU/zGPU host-fitness + datasheet helpers
+│   │       ├── offer_filters.py   shared sea_search filter vocabulary (all seas)
+│   │       ├── http_transport.py  injectable HTTP seam for REST seas (urllib)
 │   │       ├── docker_sea.py    DockerSea: docker --context <ctx>
-│   │       └── vast_sea.py      (M2-B) VastSea: vastai-python
+│   │       ├── vast_sea.py      VastSea: vastai CLI (search/create/lifecycle)
+│   │       ├── verda_sea.py     VerdaSea: Verda Cloud REST (backup marketplace)
+│   │       └── clore_sea.py     CloreSea: Clore.ai REST (crypto-settled backup)
 │   └── tests/                   { unit, service, integration }
 ├── lotsman-cli/                 thin gRPC CLI для standalone Lotsman debug
 │   └── src/lotsman_cli/
@@ -653,13 +679,16 @@ def test_run_singleton_blocks_duplicate(lotsman_grpc_stub, fake_qe_binary):
 **Через Marina (целевое M3 состояние):**
 
 ```python
-# 1. Поиск + создание инстанса (Marina хранит API key, мне не светят)
-offer = marina.vast_recommend(workload="dft_paper_grade", budget_per_hour=0.80)[0]
-host = marina.vast_create(
-    offer_id=offer.id,
+# 1. Поиск + создание инстанса (Marina хранит секреты в env/.env, мне не светят)
+#    host_type="spot" → interruptible (~½ цены on-demand; наши runs на --resume)
+offers = marina.sea_recommend(sea="vast", workload="dft_paper_grade",
+                              budget_per_hour=0.80)  # ранжир по zGPU, не цене
+host = marina.host_create(
+    sea="vast",
+    offer_id=offers[0].offer_id,
     image="exopoiesis/infra-qe-gpu:server",
     disk_gb=200,
-    host_name="w3"
+    name="w3",
 )  # → ssh ready, lotsman handshake done, watchdogs auto-attached
 
 # 2. Запуск job — host из jobId, watchdogs дефолтные + extras для NEB
@@ -687,7 +716,7 @@ if status.state == "done":
 
 # 5. Pre-destroy cleanup
 marina.harvest_all_done(host="w3")
-marina.vast_destroy(host_name="w3", confirm="yes")  # explicit guard
+marina.host_destroy(name="w3", kill_running=False)  # explicit guard
 ```
 
 **Что pitfalls делегированы Marine + Lotsman'у (вне моей головы):**

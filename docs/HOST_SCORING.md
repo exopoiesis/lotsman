@@ -10,12 +10,43 @@ All of this is exposed through the MCP `sea_search` tool and computed in
 
 ## 1. Searching
 
-`sea_search(sea, limit, gpu_name, vram_gb, cpu_name, min_reliability, max_dph,
-verified, order)`.
+`sea_search(sea, limit=15, gpu_name, vram_gb, cpu_name, min_reliability,
+max_dph, verified, order, host_type)`.
 
 Cheap, expressible constraints are pushed into the Vast query; the rest
 (`vram_gb`, `cpu_name`, `order`) are applied in Python over a widened fetch pool
-(up to 500 offers, so a sort isn't limited to the cheapest few).
+(up to 500 offers, so a sort isn't limited to the cheapest few). The default
+returns the top 15 — a wide shortlist; relay the table verbatim rather than
+re-filtering it (that just burns tokens).
+
+To shop every marketplace at once, **`seas_search`** takes the same filters but
+no `sea` arg: it queries all marketplace seas, takes the top `limit_per_sea`
+(default 7) from each, merges, sorts as one sea would, and prepends a `sea`
+column. Owned docker hosts are excluded; a sea with no creds is noted, not dropped.
+
+The same tool and table serve every marketplace sea. `sea="verda"` (Verda
+Cloud) maps its REST catalog into the identical `Offer`/columns; only `zGPU` is
+datasheet-scored there (Verda advertises no measured VRAM/PCIe bandwidth) and
+`zCPU` / `DLP/$` stay 0 (no CPU clock/model in the catalog). `sea="clore"`
+(Clore.ai, crypto-settled) likewise datasheet-scores `zGPU` but *does* compute a
+real `zCPU` (its catalog carries the CPU clock + model); Clore is consumer-GPU
+heavy — great for MLIP, thin on A100/H100 — so `zGPU` is 0 on most of its fleet.
+
+All seas share one filter vocabulary (`marina/seas/offer_filters.py`):
+`gpu_name`, `cpu_name` (family-aware, incl. `trpro`), `vram_gb`, `min_cuda`,
+`min_reliability`, `max_dph`. Two kinds, treated differently when a sea lacks
+the data:
+
+- **Selection axes** (`gpu_name` / `cpu_name` / `vram_gb`) — you asked for a
+  specific thing, so an offer that can't show it is excluded. A `cpu_name`
+  request drops all Verda rows (its catalog carries no CPU model).
+- **Quality gates** (`min_cuda` / `min_reliability`) — reject only offers *known*
+  to fall short; an offer with no value passes. A curated datacenter (Verda)
+  exposes neither a CUDA-max nor a per-host reliability score, so its
+  homogeneous A100/H100 fleet satisfies these gates by construction — excluding
+  it would be backwards. Vast/Clore report both, so they're gated normally.
+  This is what lets Verda survive a `dft_paper_grade`-style search; its `zGPU`
+  scores fine (datacenter cards in the datasheet), only `zCPU` stays 0.
 
 ### GPU family matching (`gpu_name`)
 
@@ -42,6 +73,25 @@ Sort key with optional `-` prefix for descending. Keys: `cpu_ghz`,
 `gpu_mem_bw`, `pcie_bw`, and the synthetic `zcpu` / `zgpu` (below).
 Example: `order="-zgpu"` = best GPU-DFT host first.
 
+### Host type (`host_type`)
+
+Selects the pricing mode. The `sea_search` / `seas_search` MCP tools **default
+to `"any"`** — both on-demand and spot, merged — so nothing is hidden; narrow
+explicitly when you want one:
+
+- `"any"` (**MCP default**) — queries both and merges them, re-sorted by price,
+  so the same machine can be compared on-demand vs spot side by side.
+- `"on-demand"` — runs until destroyed (pass this for OD-only).
+- `"spot"` (aliases `bid` / `interruptible`) — Vast `--type bid`; `$/hr` is
+  reported as `min_bid` (the spot floor), and the offer can be preempted.
+
+(The sea-layer `search()` default is still on-demand-only — i.e. `recommend`
+and direct callers stay OD — but the user-facing MCP tools default to `"any"`.)
+
+The result table's **`type`** column (third from the right, before `$/hr`)
+flags each row `OD` or `spot`. Our DFT runs use `--resume`/append, so Vast spot
+(~½ the on-demand price) is the real cost lever — not switching providers.
+
 ### Recommend (workload presets)
 
 `sea_recommend(sea, workload, budget_per_hour, min_hours, rank_by)` applies a
@@ -64,10 +114,12 @@ table** by default — rendered server-side so the agent spends no tokens parsin
 JSON or re-formatting. Fixed columns, contract ID first:
 
 ```
-ID | GPU | VRAM | CUDA | CPU | cores | RAM | Disk | zGPU | zCPU | DLP/$ | vbw | PCIe | $/hr | geo
+ID | GPU | VRAM | CUDA | CPU | cores | RAM | Disk | zGPU | zCPU | DLP/$ | vbw | PCIe | type | $/hr | geo
 ```
 
-- **ID** — the Vast `offer_id`; name it to rent (`host_create(offer_id=...)`).
+- **ID** — the `offer_id`; name it to rent (`host_create(offer_id=...)`). On
+  Vast it's the contract id; on Verda it's `<instance_type>@<region>[#spot]`.
+- **type** — `OD` (on-demand) or `spot` (interruptible); see `host_type` above.
 - **CUDA** — `cuda_max_good`, the highest CUDA toolkit the host runs well; match
   it to the image you deploy (filterable via `min_cuda`).
 - **cores** — `cpu_cores`/`cpu_cores_total` = cores rented to us / on the whole

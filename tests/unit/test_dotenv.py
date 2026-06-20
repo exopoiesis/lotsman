@@ -37,17 +37,23 @@ def test_find_env_files_prefers_config_dir(tmp_path: Path) -> None:
 def test_load_dotenv_sets_missing_but_never_overrides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Use a test-only var name (not a real sea key like VAST_API_KEY): load_dotenv
+    # writes straight to os.environ, which monkeypatch can't auto-undo, so a real
+    # key name here would leak into other tests (e.g. VastSea's no-key cases).
     cfg = tmp_path / "marina.toml"
     (tmp_path / ".env").write_text(
-        "VAST_API_KEY=fromfile\nALREADY_SET=fromfile\n", encoding="utf-8"
+        "MARINA_DOTENV_PROBE=fromfile\nALREADY_SET=fromfile\n", encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VAST_API_KEY", raising=False)
+    monkeypatch.delenv("MARINA_DOTENV_PROBE", raising=False)
     monkeypatch.setenv("ALREADY_SET", "fromenv")
 
-    loaded = load_dotenv(cfg)
+    try:
+        loaded = load_dotenv(cfg)
 
-    assert os.environ["VAST_API_KEY"] == "fromfile"  # newly set
-    assert os.environ["ALREADY_SET"] == "fromenv"  # existing wins
-    assert "VAST_API_KEY" in loaded
-    assert "ALREADY_SET" not in loaded
+        assert os.environ["MARINA_DOTENV_PROBE"] == "fromfile"  # newly set
+        assert os.environ["ALREADY_SET"] == "fromenv"  # existing wins
+        assert "MARINA_DOTENV_PROBE" in loaded
+        assert "ALREADY_SET" not in loaded
+    finally:
+        os.environ.pop("MARINA_DOTENV_PROBE", None)  # load_dotenv wrote it directly

@@ -23,6 +23,14 @@ a verified create→list→destroy lifecycle. Full design in
 
 ### Added — search & filters (MCP `sea_search`)
 
+- **`host_type` filter** (on-demand vs spot): Vast `search offers` defaults to
+  on-demand (no `--type` flag), which silently hid all interruptible offers.
+  `host_type` now selects `"on-demand"` (default, argv unchanged), `"spot"`
+  (`--type bid` — `$/hr` reported as `min_bid`, the spot floor; preemptible), or
+  `"any"` (queries both and merges, re-sorted by price, so the same machine can
+  be compared at both prices). The result table gains a **`type`** column (third
+  from the right, before `$/hr`): `OD` / `spot`. `Offer.host_type` and the JSON
+  view carry it; `extras` keeps both `dph_total` and `min_bid`.
 - **Family-aware `gpu_name`**: `"A100"` expands to
   `gpu_name in [A100_PCIE,A100_SXM4]` (Vast has no bare "A100") via a curated
   `_GPU_FAMILIES` map (A100/A800/H100/H200/V100/P100/B200); a specific model
@@ -36,6 +44,109 @@ a verified create→list→destroy lifecycle. Full design in
 - Python-side filters/sorts widen the fetch to the whole verified market
   (cap 2000) so a perf sort isn't truncated to the cheapest N — premium GPUs
   (A100/H100/B200) now surface in `-zgpu`.
+
+### Changed — `sea_search` / `seas_search` default to `host_type="any"`
+
+- Both MCP search tools now default to `"any"` (on-demand **and** spot, merged)
+  so nothing is hidden by default — the `type` column flags each row. Pass
+  `host_type="on-demand"` for OD-only or `"spot"` for interruptible-only. The
+  sea-layer `search()` default stays on-demand (so `recommend` and direct
+  callers are unchanged); only the user-facing tool defaults flipped.
+
+### Changed — quality gates give curated providers the benefit of the doubt
+
+- `min_cuda` / `min_reliability` in `apply_common_filters` now reject only offers
+  *known* to fall short; an offer with no value (`cuda_max_good <= 0` /
+  `reliability is None`) **passes**. A curated datacenter (Verda) exposes neither
+  a CUDA-max nor a per-host reliability score, so the old "no data → exclude"
+  rule wrongly dropped its entire A100/H100 fleet from any quality-gated search
+  (and would have made a `dft_paper_grade` search return no Verda at all).
+  Selection axes (`gpu_name` / `cpu_name` / `vram_gb`) still exclude on no-match
+  — a `cpu_name` request legitimately drops Verda (no CPU model in its catalog).
+  Vast/Clore report both fields, so they're gated exactly as before. Verda's
+  `zGPU` already computed correctly (datacenter cards are in the datasheet);
+  this just stops the gates from hiding it.
+
+### Changed — full Vast filter parity for the REST seas
+
+- Extracted the shared `sea_search` filter vocabulary into
+  **`marina/seas/offer_filters.py`** (`cpu_patterns` + `apply_common_filters`),
+  so Verda and Clore now honour the *same* filters as Vast:
+  `gpu_name`, `cpu_name` (**family-aware**, incl. the `trpro` keyword — not just
+  literal substring), `vram_gb`, `min_cuda`, `min_reliability`, `max_dph`.
+  Previously `min_cuda` was unfiltered on both and `min_reliability` on Verda,
+  and `cpu_name` only matched literally. A constraint a sea has no data for
+  (e.g. Verda exposes no CPU model / CUDA / reliability) now excludes its offers
+  — honest, since it can't be shown to hold. `_CPU_FAMILIES` moved here;
+  `VastSea._cpu_patterns` delegates to the shared helper.
+- `Hub.seas_search` no longer forwards `order` per-sea (the merged set is sorted
+  globally), so a sea lacking a sort key — e.g. Verda has no `zcpu` — is no
+  longer dropped from the cross-sea result.
+
+### Added — cross-sea search (`seas_search`)
+
+- **`seas_search`** MCP tool: runs one filter across **all marketplace seas at
+  once** (no `sea` arg) — queries each sea whose `is_marketplace` is true
+  (vast / verda / clore; owned docker hosts excluded), takes the top
+  `limit_per_sea` (default 7) from each, merges, and sorts the whole set as one
+  sea would (`order`, else cheapest first). The table prepends a **`sea`**
+  column. A sea that fails (no creds / unreachable) is reported in a trailing
+  note, never silently dropped (`Hub.seas_search` returns `(offers, errors)`).
+- `_format_offers_table(with_sea=True)` and a shared `_sort_merged` back it;
+  `is_marketplace` class flag added to Vast/Verda/Clore seas. Validated live
+  across vast+verda+clore.
+
+### Fixed
+
+- Vast `test_status_unreachable_without_key` / `test_json_calls_fail_without_key`
+  were order-dependent: `test_dotenv` called `load_dotenv`, which writes straight
+  to `os.environ` (monkeypatch can't undo it), leaking `VAST_API_KEY=fromfile`
+  into later tests. The dotenv test now uses a neutral var name and cleans up;
+  the two Vast tests `delenv` defensively. Full suite green regardless of order.
+
+### Added — Clore.ai sea (`marina/seas/clore_sea.py`)
+
+- **`CloreSea`** — a third marketplace (Clore.ai), crypto-settled (Bitcoin /
+  CLORE token / USD-stable) — a payment-diverse backup. Wired for the same two
+  commands: **`sea_search`** and **`host_create`** (+ status/list/destroy).
+- Shares the REST seam with Verda via the new **`marina/seas/http_transport.py`**
+  (`HttpResponse` / `Transport` / `urllib_transport`, extracted from verda_sea).
+  Clore specifics handled: single **`auth: <token>`** header (no "Bearer"),
+  a **browser User-Agent** (Cloudflare returns 403 `error code: 1010` otherwise),
+  and the 1 req/s rate limit surfaced as a clear error hint. Token from
+  `CLORE_API_KEY` env / `.env` (configurable via `api_key_env`), never the TOML.
+- One `GET /marketplace` returns both on-demand and spot prices per server, so
+  `host_type=any` needs no second call; rented servers are filtered out.
+  `zGPU` is datasheet-scored; `zCPU` is real (the catalog carries CPU clock +
+  model). `offer_id` = `<server_id>[#spot]`; `host_create` POSTs `/create_order`
+  (`currency`/`image`/`renting_server`/`type`/`ssh_key`/`autossh_entrypoint`,
+  `spotprice` for spot), polls `/my_orders` to a `root@<ip>` ssh_target.
+- Validated against the live Clore API (consumer-GPU heavy: good for MLIP, thin
+  on A100/H100). Config: `[seas.clore] type = "clore_sea"`.
+
+### Added — Verda Cloud sea (`marina/seas/verda_sea.py`)
+
+- **`VerdaSea`** — a second marketplace (Verda, ex-DataCrunch) as a backup
+  channel alongside Vast, spoken over the REST API (no CLI). Wired for the two
+  commands worth evaluating it on: **`sea_search`** and **`host_create`** (plus
+  the supporting `status` / `list_instances` / `destroy`; `recommend` /
+  `stop` / `start` / `renew` raise NotImplementedError for now).
+- HTTP via an **injectable transport** (default: stdlib `urllib`, so no new
+  dependency); OAuth2 client-credentials token managed internally with refresh
+  on 401. Credentials resolve from `VERDA_CLIENT_ID`/`VERDA_CLIENT_SECRET` env
+  or `~/.verda/config.json` (the same file SkyPilot uses) — never the TOML.
+- `sea_search` maps `/instance-types` × `/instance-availability` into the shared
+  `Offer`/table, honouring the same `gpu_name`/`vram_gb`/`max_dph`/`order`/
+  `host_type` (on-demand / spot / any) vocabulary as Vast. `zGPU` is scored from
+  datasheet FP64 + datasheet VRAM bandwidth (Verda advertises no measured
+  bandwidth); `zCPU`/`dlperf` stay 0 (CPU clock/model not advertised).
+- `offer_id` is self-contained (`"<instance_type>@<region>"`, `+"#spot"` for an
+  interruptible order) so `host_create` needs only that one token; it ensures
+  the account SSH key, POSTs `/instances`, polls to `running`, and returns a
+  handle with a usable `root@<ip>` ssh_target.
+- New datasheet helper **`perf_score.gpu_mem_bandwidth(gpu_name, vram_gb)`** for
+  catalogs without measured bandwidth (A100/A800 split 40GB HBM2 / 80GB HBM2e).
+- Config: `[seas.verda] type = "verda_sea"` (see `scripts/marina.example.toml`).
 
 ### Added — host-fitness scores (`marina/seas/perf_score.py`)
 

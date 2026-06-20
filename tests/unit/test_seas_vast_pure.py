@@ -49,7 +49,7 @@ def _sea() -> VastSea:
     return VastSea("vast", api_key="k", runner=lambda *a, **k: RunResult(0, "", ""))
 
 
-def test_offer_from_raw_proportional_ram_and_units() -> None:
+def test_offer_from_raw_total_ram_and_units() -> None:
     raw = {
         "id": 7,
         "gpu_name": "A100 SXM4",
@@ -78,8 +78,9 @@ def test_offer_from_raw_proportional_ram_and_units() -> None:
     assert offer.geolocation == "Czechia, CZ"
     assert offer.dlperf == 123.4
     assert offer.dlperf_per_dollar == 77.1  # from dlperf_per_dphtotal
-    # 262144MB * 16/64 = 65536MB = 64GB
-    assert offer.ram_gb == 64
+    # RAM = total machine cpu_ram, unscaled (matches vastai's RAM column):
+    # 262144 MB / 1024 = 256 GB (NOT scaled by the 16/64 core share).
+    assert offer.ram_gb == 256
     assert offer.disk_gb == 512
     assert offer.price_per_hour == 1.6
     assert offer.fp64_native is True

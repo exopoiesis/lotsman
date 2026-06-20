@@ -25,6 +25,7 @@ from collections.abc import Callable
 
 from marina.seas.base import CostBreakdown, HostHandle, Offer, SeaStatus
 from marina.seas.forwarding import Forward, Forwarder, SubprocessForwarder
+from marina.seas.offer_filters import cpu_patterns
 from marina.seas.perf_score import zcpu, zgpu
 from marina.seas.presets import PRESETS, matches
 from marina.seas.runner import Runner, RunResult, subprocess_runner
@@ -56,19 +57,8 @@ _GPU_FAMILIES: dict[str, tuple[str, ...]] = {
     "B200": ("B200",),
 }
 
-# CPU families. Unlike gpu_name, Vast does not expose cpu_name as a queryable
-# field, so these are matched python-side as case-insensitive substrings of the
-# offer's cpu_name. A family expands to several patterns (newest gen first); an
-# unknown value is treated as a single literal substring (e.g. "5955WX").
-_CPU_FAMILIES: dict[str, tuple[str, ...]] = {
-    # AMD Threadripper PRO WX workstation chips — the high-clock family the
-    # project settled on for CP2K/DFT (e.g. 5955WX ~7 GHz). Gens 7 > 5 > 3.
-    "TRPRO": ("Threadripper PRO 7", "Threadripper PRO 5", "Threadripper PRO 3"),
-    "TR_PRO": ("Threadripper PRO 7", "Threadripper PRO 5", "Threadripper PRO 3"),
-    "THREADRIPPER_PRO": (
-        "Threadripper PRO 7", "Threadripper PRO 5", "Threadripper PRO 3",
-    ),
-}
+# `cpu_patterns` (family-aware, incl. "trpro") is shared with the REST seas
+# (imported above) so every sea matches a cpu_name filter the same way.
 
 # Offer attribute each sort key maps to (used by search(order=...)).
 _ORDER_KEYS = {
@@ -163,6 +153,8 @@ def _default_pubkey_loader(path: str) -> str:
 
 class VastSea:
     """A hosting sea backed by `vastai` (the Vast.ai marketplace CLI)."""
+
+    is_marketplace = True  # dynamic, filterable catalog -> included in seas_search
 
     def __init__(
         self,
@@ -271,24 +263,35 @@ class VastSea:
 
     # ----- offers / search / recommend -----
 
-    def _offer_from_raw(self, raw: dict[str, object]) -> Offer:
+    def _offer_from_raw(
+        self, raw: dict[str, object], queried_type: str | None = None
+    ) -> Offer:
         gpu_name = str(raw.get("gpu_name", "") or "")
         num_gpus = _as_int(raw.get("num_gpus"), 1) or 1
-        # Vast reports total host cores/RAM; the rented share is proportional to
-        # cpu_cores_effective / cpu_cores when both are present.
+        # cpu_cores_effective = cores allocated to THIS offer (a fractional share
+        # of the host); cpu_cores = the whole machine. We report the effective
+        # share as `cpu_cores` (matches vastai's `vCPUs` column).
         total_cores = _as_int(raw.get("cpu_cores"))
         eff_cores = _as_int(raw.get("cpu_cores_effective"))
         cpu_cores = eff_cores or total_cores
-        total_ram_mb = _as_float(raw.get("cpu_ram"))
-        if total_cores and eff_cores:
-            ram_mb = total_ram_mb * (eff_cores / total_cores)
-        else:
-            ram_mb = total_ram_mb
+        # RAM: `cpu_ram` is the machine's TOTAL RAM (MB) and vastai displays it
+        # unscaled — verified against vastai's own RAM column. Do NOT scale it by
+        # the core share (that under-reported wildly, e.g. a 24 GB host showing
+        # 5 GB) and wrongly tripped the preset min-RAM gate.
+        ram_mb = _as_float(raw.get("cpu_ram"))
         cpu_ghz = _as_float(raw.get("cpu_ghz"))
         cpu_name = str(raw.get("cpu_name", "") or "")
         gpu_mem_bw = _as_float(raw.get("gpu_mem_bw"))  # measured VRAM BW, GB/s
         pcie_bw = _as_float(raw.get("pcie_bw"))        # measured PCIe BW, GB/s
         total_flops = _as_float(raw.get("total_flops"))  # FP32 TFLOPS (Vast)
+        # Host type: an interruptible (bid/spot) offer is flagged by `is_bid`;
+        # fall back to the queried `--type` when Vast omits the field. For spot
+        # the price the renter actually competes at is `min_bid`, not dph_total.
+        dph = _as_float(raw.get("dph_total"))
+        min_bid = _as_float(raw.get("min_bid"))
+        is_bid = bool(raw.get("is_bid")) or (queried_type == "bid")
+        host_type = "interruptible" if is_bid else "on-demand"
+        price = min_bid if (is_bid and min_bid > 0) else dph
         return Offer(
             sea=self.name,
             offer_id=str(raw.get("id", "")),
@@ -312,7 +315,8 @@ class VastSea:
             ),
             ram_gb=int(ram_mb // 1024),
             disk_gb=_as_int(raw.get("disk_space")),
-            price_per_hour=_as_float(raw.get("dph_total")),
+            price_per_hour=price,
+            host_type=host_type,
             reliability=_as_float(raw.get("reliability2"), None)  # type: ignore[arg-type]
             if raw.get("reliability2") is not None
             else None,
@@ -324,6 +328,8 @@ class VastSea:
                 "verified": raw.get("verified"),
                 "machine_id": raw.get("machine_id"),
                 "geolocation": raw.get("geolocation"),
+                "dph_total": dph,        # on-demand price of this machine
+                "min_bid": min_bid,      # spot floor (relevant when interruptible)
             },
         )
 
@@ -367,18 +373,7 @@ class VastSea:
             return f"gpu_name in [{joined}]"
         return f"gpu_name={name.replace(' ', '_')}"
 
-    @staticmethod
-    def _cpu_patterns(cpu_name: object) -> list[str]:
-        """Substring patterns for a cpu_name filter, family-aware.
-
-        ``trpro`` -> the Threadripper PRO 7/5/3 patterns; any other value is a
-        single literal substring (e.g. ``5955WX`` or ``EPYC 7763``); empty -> none.
-        """
-        if not cpu_name:
-            return []
-        name = str(cpu_name).strip()
-        fam = _CPU_FAMILIES.get(name.upper().replace(" ", "_"))
-        return list(fam) if fam else [name]
+    _cpu_patterns = staticmethod(cpu_patterns)  # shared, family-aware
 
     @staticmethod
     def _sort_offers(offers: list[Offer], order: str) -> list[Offer]:
@@ -396,6 +391,26 @@ class VastSea:
 
         return sorted(offers, key=keyfn, reverse=desc)
 
+    @staticmethod
+    def _host_types(host_type: object) -> list[str | None]:
+        """Vast `--type` values to query for a requested host_type.
+
+        ``None`` = omit the flag (Vast's default = on-demand), so the default
+        path stays byte-identical to before. ``"bid"`` = interruptible/spot.
+        ``any``/``all`` fetches both (on-demand + spot) so the same machine can
+        be compared at both prices.
+        """
+        ht = str(host_type or "").strip().lower()
+        if ht in ("", "on-demand", "ondemand", "on_demand", "od", "demand"):
+            return [None]
+        if ht in ("interruptible", "spot", "bid", "int", "preemptible"):
+            return ["bid"]
+        if ht in ("any", "all", "both"):
+            return [None, "bid"]
+        raise VastSeaError(
+            f"unknown host_type {host_type!r}; use 'on-demand', 'spot', or 'any'"
+        )
+
     def search(
         self,
         filters: dict[str, object] | None = None,
@@ -408,17 +423,24 @@ class VastSea:
         vram_gb = _as_int(f["vram_gb"]) if f.get("vram_gb") else 0
         order = str(f.get("order") or "").strip()
         cpu_pats = self._cpu_patterns(f.get("cpu_name"))
-        # vram_gb / order / cpu_name are applied python-side, so they need the
-        # full matching pool — fetch the cap, not just the cheapest `limit`.
-        post = bool(vram_gb or order or cpu_pats)
+        vast_types = self._host_types(f.get("host_type"))
+        # vram_gb / order / cpu_name / multi-type all need the full matching
+        # pool (merge/sort happens python-side), so fetch the cap not `limit`.
+        post = bool(vram_gb or order or cpu_pats or len(vast_types) > 1)
         fetch_limit = max(limit, _SEARCH_FETCH_CAP) if post else limit
-        data = self._vast_json(
-            ["search", "offers", query,
-             "--order", "dph_total", "--limit", str(fetch_limit)]
-        )
-        if not isinstance(data, list):
-            raise VastSeaError("vastai search offers: expected a JSON array")
-        offers = [self._offer_from_raw(o) for o in data if isinstance(o, dict)]
+        offers: list[Offer] = []
+        for vt in vast_types:
+            argv = ["search", "offers", query,
+                    "--order", "dph_total", "--limit", str(fetch_limit)]
+            if vt:  # omit for on-demand -> keeps the default argv unchanged
+                argv += ["--type", vt]
+            data = self._vast_json(argv)
+            if not isinstance(data, list):
+                raise VastSeaError("vastai search offers: expected a JSON array")
+            offers += [
+                self._offer_from_raw(o, queried_type=vt)
+                for o in data if isinstance(o, dict)
+            ]
         # Substring guard: if a known family was requested, drop anything Vast
         # returned that doesn't belong to it (defence vs an uncatalogued token).
         fam = str(f.get("gpu_name") or "").strip().upper()
@@ -434,6 +456,10 @@ class VastSea:
             offers = [o for o in offers if o.vram_gb == vram_gb]
         if order:
             offers = self._sort_offers(offers, order)
+        elif len(vast_types) > 1:
+            # Merged on-demand + spot: re-sort by price so the two pools
+            # interleave (each Vast call only sorts within its own type).
+            offers = sorted(offers, key=lambda o: o.price_per_hour)
         return offers[:limit]
 
     def recommend(

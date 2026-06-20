@@ -25,6 +25,9 @@ class Offer:
     price_per_hour: float
     reliability: float | None = None
     inet_down_mbps: float | None = None
+    # Marketplace host type: "on-demand" (runs until destroyed) or
+    # "interruptible" (spot/bid — can be preempted; price_per_hour = min_bid).
+    host_type: str = "on-demand"
     cpu_name: str = ""
     cpu_cores_total: int = 0  # total cores on the physical host (0 = unknown)
     geolocation: str = ""

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from marina.seas.clore_sea import CloreSea
 from marina.seas.docker_sea import DockerSea
 from marina.seas.factory import SeaConfigError, build_sea
 from marina.seas.vast_sea import VastSea
+from marina.seas.verda_sea import VerdaSea
 
 pytestmark = pytest.mark.unit
 
@@ -86,6 +88,67 @@ def test_build_vast_sea_custom_api_key_env(monkeypatch: pytest.MonkeyPatch) -> N
     sea = build_sea("vast", "vast_sea", raw)
     assert sea.api_key_env == "MY_VAST_KEY"
     assert sea._poll_interval_s == 3.0
+
+
+def test_build_verda_sea_basic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VERDA_CLIENT_ID", "cid")
+    monkeypatch.setenv("VERDA_CLIENT_SECRET", "csecret")
+    raw = {
+        "type": "verda_sea",
+        "default_region": "ICE-01",
+        "ssh_pubkey_path": "/keys/verda.pub",
+        "default_disk_gb": 200,
+        "poll_interval_s": 4,
+    }
+    sea = build_sea("verda", "verda_sea", raw)
+    assert isinstance(sea, VerdaSea)
+    assert sea.name == "verda"
+    assert sea._region == "ICE-01"
+    assert sea._ssh_pubkey_path == "/keys/verda.pub"
+    assert sea._default_disk_gb == 200
+    assert sea._poll_interval_s == 4.0
+    # secret came from the env, not the TOML (like vast's api_key_env)
+    assert sea._client_id == "cid"
+    assert sea._client_secret == "csecret"
+
+
+def test_build_verda_sea_custom_env_var_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MY_VERDA_ID", "the-id")
+    monkeypatch.setenv("MY_VERDA_SECRET", "the-secret")
+    raw = {
+        "type": "verda_sea",
+        "client_id_env": "MY_VERDA_ID",
+        "client_secret_env": "MY_VERDA_SECRET",
+    }
+    sea = build_sea("verda", "verda_sea", raw)
+    assert sea._client_id == "the-id"
+    assert sea._client_secret == "the-secret"
+
+
+def test_build_clore_sea_basic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLORE_API_KEY", "tok")
+    raw = {
+        "type": "clore_sea",
+        "ssh_pubkey_path": "/keys/vast.pub",
+        "default_currency": "CLORE-Blockchain",
+        "poll_interval_s": 20,
+    }
+    sea = build_sea("clore", "clore_sea", raw)
+    assert isinstance(sea, CloreSea)
+    assert sea.name == "clore"
+    assert sea._api_key == "tok"          # from env, not TOML
+    assert sea._default_currency == "CLORE-Blockchain"
+    assert sea._poll_interval_s == 20.0
+
+
+def test_build_clore_sea_custom_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MY_CLORE_KEY", "k")
+    raw = {"type": "clore_sea", "api_key_env": "MY_CLORE_KEY"}
+    sea = build_sea("clore", "clore_sea", raw)
+    assert sea.api_key_env == "MY_CLORE_KEY"
+    assert sea._api_key == "k"
 
 
 def test_build_vast_sea_passes_ssh_and_port_fields(

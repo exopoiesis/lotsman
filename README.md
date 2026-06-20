@@ -154,8 +154,8 @@ Two binaries, one project:
 - **gRPC** for Marina ↔ Lotsman — service-to-service, native streaming for harvest tarballs and event streams, HTTP/2 multiplexing for high-frequency status polls, protobuf-typed schema evolution.
 
 - **Marina** — local daemon. One MCP entry in `mcp.json`. Routes calls to
-  the right Lotsman by jobId. Manages Vast.ai instance lifecycle so Claude
-  doesn't need to touch the API directly.
+  the right Lotsman by jobId. Manages cloud instance lifecycle across
+  marketplace seas (Vast.ai, Verda) so Claude doesn't touch the APIs directly.
 - **Lotsman** — per-container daemon. Baked into each `infra-<tool>-gpu`
   image. Knows its tool's quirks (manifest.toml). Standalone MCP server —
   can be probed directly for debugging.
@@ -186,9 +186,23 @@ than one container.
 | Group | Commands |
 |---|---|
 | Host registry | `host_add`, `host_remove`, `host_list`, `host_status` |
-| Vast.ai search | `vast_search`, `vast_recommend`, `vast_image_list`, `vast_balance` |
-| Vast.ai lifecycle | `vast_create`, `vast_start`, `vast_stop`, `vast_destroy`, `vast_list`, `vast_renew` |
+| Marketplace search | `sea_list`, `sea_search`, `seas_search` (all seas at once), `sea_recommend`, `sea_status` |
+| Host lifecycle | `host_create`, `host_start`, `host_stop`, `host_destroy`, `host_list` |
 | Fleet ops | `kill_all_on_host`, `harvest_all_done`, `events_all`, `cost_summary`, `cost_history` |
+
+Provider-agnostic by design: every command takes a `sea` argument naming the
+provider. Marketplace seas today are **`vast`** (Vast.ai) plus two backup
+channels — **`verda`** (Verda Cloud — EU regions, native spot) and **`clore`**
+(Clore.ai — crypto-settled, consumer-GPU heavy, good for MLIP); owned hardware
+(`gomer`, `loki`) is exposed as `docker_sea`s at $0/hr. `sea_search` filters on
+`gpu_name` / `vram_gb` / `cpu_name` / `order` and a **`host_type`** dimension —
+`any` (default; on-demand + spot merged, so nothing is hidden), `on-demand`, or
+`spot` (interruptible; `$/hr` = the spot floor) — and returns a server-rendered
+table whose `type` column flags OD vs spot. **`seas_search`** runs the same filter across *all*
+marketplace seas at once (top N from each, merged and sorted, with a leading
+`sea` column) for apples-to-apples shopping. Two synthetic host-fitness scores
+(`zGPU` for FP64 GPU-DFT, `zCPU` for CP2K) rank hosts; see
+[`docs/HOST_SCORING.md`](docs/HOST_SCORING.md).
 
 **Per-job (Marina proxies to Lotsman):**
 

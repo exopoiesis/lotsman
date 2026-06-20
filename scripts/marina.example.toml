@@ -82,3 +82,32 @@ disk_gb = 200
 # # ssh_pubkey_path = "~/.ssh/id_vast.pub"   # default: <ssh_key_path>.pub
 # # ssh_user = "root"                         # default: root
 # # container_grpc_port = 50051               # Lotsman port inside the box
+
+# Verda Cloud (ex-DataCrunch) marketplace: a backup channel alongside Vast,
+# spoken over the REST API (no CLI). Currently wired for the two commands worth
+# evaluating it on — sea_search and host_create. Secrets are NOT stored here
+# (same as vast): VerdaSea reads the OAuth2 client id / secret from the named
+# env vars (default VERDA_CLIENT_ID / VERDA_CLIENT_SECRET), which you set in
+# your shell or the gitignored `.env` next to this file (loaded at startup):
+#     VERDA_CLIENT_ID=...
+#     VERDA_CLIENT_SECRET=...
+# [seas.verda]
+# type = "verda_sea"
+# # client_id_env = "VERDA_CLIENT_ID"         # env var holding the client id
+# # client_secret_env = "VERDA_CLIENT_SECRET" # env var holding the client secret
+# # default_region = "FIN-03"                 # used when an offer_id omits region
+# # ssh_pubkey_path = "~/.ssh/id_vast.pub"    # required for host_create
+# # default_image = "ubuntu-24.04-cuda-12.8-open-docker"
+# # default_disk_gb = 100
+# # base_url = "https://api.verda.com/v1"
+
+# Clore.ai marketplace: crypto-settled (Bitcoin / CLORE token / USD-stable)
+# backup channel, consumer-GPU heavy (good for MLIP, thin on A100/H100). Same
+# as vast/verda, the token is NOT stored here — set it in the env / `.env`:
+#     CLORE_API_KEY=...
+# [seas.clore]
+# type = "clore_sea"
+# # api_key_env = "CLORE_API_KEY"             # env var holding the API token
+# # ssh_pubkey_path = "~/.ssh/id_vast.pub"    # required for host_create
+# # default_currency = "bitcoin"              # or "CLORE-Blockchain" (token discount)
+# # default_image = "cloreai/ubuntu22.04-cuda-12.4"

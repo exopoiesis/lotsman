@@ -169,6 +169,36 @@ class Hub:
     ) -> list[Offer]:
         return self.sea_get(sea).search(filters=filters, limit=limit)
 
+    def seas_search(
+        self,
+        filters: dict[str, Any] | None = None,
+        limit_per_sea: int = 7,
+    ) -> tuple[list[Offer], dict[str, str]]:
+        """Search every marketplace sea with one filter and merge the offers.
+
+        Queries each registered sea whose ``is_marketplace`` is true (the dynamic,
+        filterable catalogs — vast / verda / clore — not owned docker hosts),
+        taking the top ``limit_per_sea`` from each. Returns the merged offers
+        (each carries its ``.sea``; caller sorts) plus a ``{sea: error}`` map for
+        any sea that failed (no creds / unreachable / bad filter) so the failure
+        is surfaced, never silently dropped.
+        """
+        # `order` is applied globally to the merged set by the caller; don't
+        # forward it per-sea, or a sea that lacks that sort key (e.g. Verda has
+        # no zcpu) would raise and be dropped from the cross-sea result.
+        per_sea = {k: v for k, v in (filters or {}).items() if k != "order"}
+        merged: list[Offer] = []
+        errors: dict[str, str] = {}
+        for name in self.sea_list():
+            sea = self.seas[name]
+            if not getattr(sea, "is_marketplace", False):
+                continue
+            try:
+                merged.extend(sea.search(filters=per_sea, limit=limit_per_sea))
+            except Exception as exc:  # noqa: BLE001 — one sea must not sink the rest
+                errors[name] = str(exc)
+        return merged, errors
+
     def sea_recommend(
         self,
         sea: str,

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from marina.mcp_server import _format_offers_table, _rank_offers, _short_cpu
+from marina.mcp_server import (
+    _format_offers_table,
+    _rank_offers,
+    _short_cpu,
+    _sort_merged,
+)
 from marina.seas.base import Offer
 from marina.seas.presets import PRESETS
 
@@ -46,6 +51,42 @@ def test_format_table_has_fixed_columns_and_id_first() -> None:
 
 def test_format_table_empty() -> None:
     assert _format_offers_table([]) == "(no offers)"
+
+
+def test_format_table_with_sea_prepends_sea_column() -> None:
+    table = _format_offers_table(
+        [_offer(sea="vast", offer_id="v1"), _offer(sea="verda", offer_id="d1")],
+        with_sea=True,
+    )
+    header_cells = [c.strip() for c in table.splitlines()[0].split("|")]
+    assert header_cells[0] == "sea"        # sea column is first
+    assert header_cells[1] == "ID"
+    body = "\n".join(table.splitlines()[2:])
+    assert "vast" in body and "verda" in body
+
+
+def test_sort_merged_price_default_and_keyed() -> None:
+    a = _offer(sea="vast", offer_id="a", price_per_hour=2.0, zgpu=100)
+    b = _offer(sea="verda", offer_id="b", price_per_hour=1.0, zgpu=300)
+    c = _offer(sea="clore", offer_id="c", price_per_hour=3.0, zgpu=200)
+    ids = lambda offs: [o.offer_id for o in offs]  # noqa: E731
+    # default: cheapest first
+    assert ids(_sort_merged([a, b, c], "")) == ["b", "a", "c"]
+    # descending zgpu
+    assert ids(_sort_merged([a, b, c], "-zgpu")) == ["b", "c", "a"]
+
+
+def test_format_table_host_type_column_before_price() -> None:
+    table = _format_offers_table([
+        _offer(offer_id="od1", host_type="on-demand", price_per_hour=1.50),
+        _offer(offer_id="sp1", host_type="interruptible", price_per_hour=0.50),
+    ])
+    header_cells = [c.strip() for c in table.splitlines()[0].split("|")]
+    # "type" sits third from the right: ..., type, $/hr, geo
+    assert header_cells[-3:] == ["type", "$/hr", "geo"]
+    body = table.splitlines()[2:]
+    assert any("OD" in r and "1.50" in r for r in body)
+    assert any("spot" in r and "0.50" in r for r in body)
 
 
 def test_rank_offers_by_fitness_desc_and_price_asc() -> None:

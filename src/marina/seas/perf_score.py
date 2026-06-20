@@ -96,6 +96,32 @@ def fp64_tflops(
     return per_gpu_fp32 * _CONSUMER_FP64_RATIO
 
 
+# Datasheet per-GPU VRAM bandwidth (GB/s) by model substring (newest first).
+# For providers that DON'T advertise a measured bandwidth (e.g. Verda); Vast
+# reports `gpu_mem_bw` directly and should keep preferring that measured value.
+_GPU_MEM_BW_GBS: tuple[tuple[str, float], ...] = (
+    ("H200", 4800.0), ("H100", 3350.0), ("H800", 3350.0), ("GH200", 4900.0),
+    ("B200", 8000.0), ("B100", 8000.0),
+    ("A800", 1935.0), ("A100", 1935.0),  # 80GB HBM2e; 40GB variant handled below
+    ("V100", 900.0), ("P100", 732.0),
+)
+
+
+def gpu_mem_bandwidth(gpu_name: str, vram_gb: int = 0) -> float:
+    """Datasheet per-GPU VRAM bandwidth (GB/s); 0 if the model is unknown.
+
+    A fallback for catalogs that don't measure it. The A100/A800 40GB part is
+    HBM2 (~1555 GB/s); the 80GB part is HBM2e (~1935), so split by `vram_gb`.
+    """
+    upper = (gpu_name or "").upper()
+    for token, value in _GPU_MEM_BW_GBS:
+        if token in upper:
+            if token in ("A100", "A800") and 0 < vram_gb <= 40:
+                return 1555.0
+            return value
+    return 0.0
+
+
 def cpu_mem_bandwidth(cpu_name: str) -> float:
     """Estimated whole-host memory bandwidth (GB/s) from the CPU family."""
     return _lookup(cpu_name or "", _CPU_MEM_BW, _DEFAULT_CPU_MEM_BW)

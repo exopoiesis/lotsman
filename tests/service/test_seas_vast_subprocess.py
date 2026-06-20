@@ -151,8 +151,9 @@ def test_search_parses_offers_and_marks_fp64() -> None:
     assert a100.cpu_cores == 16
     assert a100.gpu_model == "A100 PCIE"
     assert a100.reliability == 0.985
-    # RAM allocated proportionally: 131072MB * 16/64 = 32768MB = 32GB
-    assert a100.ram_gb == 32
+    # RAM = total machine cpu_ram, unscaled (vastai displays it this way):
+    # 131072 MB / 1024 = 128 GB.
+    assert a100.ram_gb == 128
     # consumer card -> no native FP64
     assert rtx.fp64_native is False
 
@@ -230,6 +231,81 @@ def test_search_cpu_name_family_filters_python_side() -> None:
     # python-side filter widened the fetch pool
     argv = runner.calls[0].argv
     assert int(argv[argv.index("--limit") + 1]) >= 500
+
+
+def test_search_on_demand_default_omits_type_flag() -> None:
+    # The default path must stay byte-identical: no --type flag (Vast's default
+    # is on-demand), and every offer is labelled on-demand.
+    runner = FakeRunner()
+    runner.expect(_has("search", "offers"), RunResult(0, _OFFERS, ""))
+
+    sea = _make_sea(runner)
+    offers = sea.search()
+
+    assert "--type" not in runner.calls[0].argv
+    assert all(o.host_type == "on-demand" for o in offers)
+
+
+_BID_OFFERS = json.dumps(
+    [
+        {
+            "id": 333,
+            "gpu_name": "A100 SXM4",
+            "num_gpus": 1,
+            "gpu_ram": 81920,
+            "cpu_cores": 64,
+            "cpu_cores_effective": 16,
+            "cpu_ram": 131072,
+            "disk_space": 200,
+            "dph_total": 0.90,      # on-demand-equivalent price of the machine
+            "min_bid": 0.31,        # spot floor — what the renter competes at
+            "is_bid": True,
+            "verified": True,
+        }
+    ]
+)
+
+
+def test_search_spot_passes_type_bid_and_prices_at_min_bid() -> None:
+    runner = FakeRunner()
+    runner.expect(_has("search", "offers"), RunResult(0, _BID_OFFERS, ""))
+
+    sea = _make_sea(runner)
+    offers = sea.search(filters={"host_type": "spot"})
+
+    argv = runner.calls[0].argv
+    assert argv[argv.index("--type") + 1] == "bid"
+    (spot,) = offers
+    assert spot.host_type == "interruptible"
+    # spot price = min_bid, not dph_total
+    assert spot.price_per_hour == 0.31
+    assert spot.extras["dph_total"] == 0.90
+
+
+def test_search_any_merges_both_types_sorted_by_price() -> None:
+    runner = FakeRunner()
+    # two calls: on-demand (no --type) then bid (--type bid)
+    runner.expect(
+        lambda a: "search" in a and "offers" in a and "--type" not in a,
+        RunResult(0, _OFFERS, ""),
+    )
+    runner.expect(_has("--type", "bid"), RunResult(0, _BID_OFFERS, ""))
+
+    sea = _make_sea(runner)
+    offers = sea.search(filters={"host_type": "any"})
+
+    assert len(runner.calls) == 2
+    types = {o.host_type for o in offers}
+    assert types == {"on-demand", "interruptible"}
+    # merged view re-sorted by price ascending
+    prices = [o.price_per_hour for o in offers]
+    assert prices == sorted(prices)
+
+
+def test_search_unknown_host_type_raises() -> None:
+    sea = _make_sea(FakeRunner())
+    with pytest.raises(VastSeaError, match="unknown host_type"):
+        sea.search(filters={"host_type": "bogus"})
 
 
 def test_search_times_out_to_clear_error_not_a_hang() -> None:
@@ -564,7 +640,9 @@ def test_status_reports_balance_when_reachable() -> None:
     assert s.burn_rate_per_hour == 0.75
 
 
-def test_status_unreachable_without_key() -> None:
+def test_status_unreachable_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ensure no ambient/leaked VAST_API_KEY so api_key=None truly means no key.
+    monkeypatch.delenv("VAST_API_KEY", raising=False)
     sea = VastSea("vast", api_key=None, runner=FakeRunner())
     s = sea.status()
     assert s.reachable is False
@@ -589,7 +667,8 @@ def test_renew_not_supported() -> None:
         sea.renew("w1", 24)
 
 
-def test_json_calls_fail_without_key() -> None:
+def test_json_calls_fail_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VAST_API_KEY", raising=False)
     sea = VastSea("vast", api_key=None, runner=FakeRunner())
     with pytest.raises(VastSeaError, match="no Vast.ai API key"):
         sea.search()
